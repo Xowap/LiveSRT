@@ -1,0 +1,74 @@
+[project]
+name =  "livesrt"
+version = "0.1.0"
+description = "Live subtitles for your life"
+authors = [
+    { name = "Rémy Sanchez", email = "remy.sanchez@hyperthese.net" },
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "rich",
+    "rich-click",
+    "click",
+    "httpx",
+    "pyyaml",
+    "keyring",
+    "pwinput",
+]
+
+[project.scripts]
+livesrt = "livesrt.cli:cli"
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "ruff",
+    "pytest",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff.lint]
+select = [
+    # -- Core --
+    "E",  # pycodestyle (errors)
+    "W",  # pycodestyle (warnings)
+    "F",  # Pyflakes
+    "I",  # isort
+    "C90",  # McCabe Complexity
+    "D1",  # Mandatory docstrings
+    "S",  # Bandit
+
+    # -- Bonus --
+    "A",  # flake8-bugbear
+    "B",  # flake8-bugbear
+    "DTZ",  # date/time zone
+    "T10",  # debugger
+    "EM",  # error messages
+    "EXE",  # executable
+    "G",  # logging
+    "UP",  # pyupgrade
+    "ASYNC",  # async
+    "INP",  # PEP 420
+    "T20",  # no print
+    "PT",  # pytest
+    "SLOT",  # slots
+    "TCH",  # type checking blocks
+    "PTH",  # Use pathlib
+    "FIX",  # Don't allow not done stuff in code
+    "ERA",  # Don't comment code
+    "RUF",  # Ruff stuff
+    "TID251",  # See below
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "UP"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"requests".msg = "Use `httpx` instead, which has timeouts by default."
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
