@@ -437,10 +437,22 @@ class Receiver(StreamReceiver):
     type=click.Choice(["eu", "us"]),
     default="eu",
 )
+@click.option(
+    *["--replay-file", "-f"],
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "If specified, the content of this file will be used instead of the "
+        "actual microphone. It still goes through the same API, this is mostly "
+        "useful for debugging purposes. Requires `ffmpeg`."
+    ),
+)
 @click.pass_obj
 @run_sync
 async def transcribe(
-    obj: Context, region: Literal["eu", "us"], device: int | None = None
+    obj: Context,
+    region: Literal["eu", "us"],
+    replay_file: str,
+    device: int | None = None,
 ):
     """Transcribes live the audio from the microphone"""
 
@@ -457,8 +469,13 @@ async def transcribe(
 
     receiver = Receiver()
 
+    if replay_file:
+        source = mm.stream_file(replay_file)
+    else:
+        source = mm.stream_mic(device)
+
     try:
-        async with mm.stream_mic(device) as bits:
+        async with source as bits:
             await aai.stream(bits, receiver, sample_rate=mm.sample_rate)
     except httpx.HTTPError as e:
         display_http_error(e)

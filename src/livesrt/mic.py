@@ -1,11 +1,13 @@
 """This is the module in charge of live audio capture"""
 
 import asyncio
+import subprocess
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 
 import pyaudio
 
@@ -177,3 +179,92 @@ class MicManager:
             yield queue
         finally:
             run = False
+
+    @asynccontextmanager
+    async def stream_file(
+        self,
+        file_path: str | Path,
+        config: StreamConfig | None = None,
+    ) -> AsyncIterator[asyncio.Queue[bytes]]:
+        """
+        Opens an audio file and streams audio data through an async queue.
+
+        Parameters
+        ----------
+        file_path : str or Path
+            Path to the audio file to stream.
+        config : StreamConfig or None
+            Stream configuration. Defaults to 100ms reads with 3s max latency.
+
+        Notes
+        -----
+        Audio is converted to 16-bit PCM mono at the manager's sample rate using
+        ffmpeg. The stream automatically stops and cleans up when exiting the context.
+        Data is streamed at approximately real-time speed to avoid filling the queue
+        faster than it would be consumed in live playback.
+        """
+
+        if config is None:
+            config = self.make_stream_config()
+
+        queue: asyncio.Queue[bytes] = asyncio.Queue(config.queue_size)
+
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            *["-i", str(file_path)],
+            *["-f", "wav"],
+            *["-acodec", "pcm_s16le"],
+            *["-ar", str(self.sample_rate)],
+            *["-ac", "1"],
+            "-hide_banner",
+            *["-loglevel", "error"],
+            "-",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        async def _stream() -> None:
+            buf = b""
+            chunk_size = 2_000
+            # Calculate real-time duration for each chunk
+            # 16-bit PCM = 2 bytes per sample, mono = 1 channel
+            bytes_per_second = self.sample_rate * 2
+            chunk_duration = chunk_size / bytes_per_second
+
+            try:
+                while process.returncode is None:
+                    assert process.stdout is not None  # noqa: S101
+
+                    while data := await process.stdout.read(chunk_size):
+                        buf += data
+
+                        while len(buf) >= chunk_size:
+                            await queue.put(buf[:chunk_size])
+                            buf = buf[chunk_size:]
+                            await asyncio.sleep(chunk_duration)
+            finally:
+                await queue.put(b"")
+
+                if process.returncode == 1:
+                    if process.stderr:
+                        msg = f"ffmpeg error: {process.stderr.read()}"
+                    else:
+                        msg = "ffmpeg error"
+
+                    raise RuntimeError(msg)
+
+        stream_t = asyncio.create_task(_stream())
+
+        try:
+            yield queue
+        finally:
+            stream_t.done() or stream_t.cancel()
+            process.terminate()
+
+            try:
+                async with asyncio.timeout(5):
+                    await stream_t
+                    await process.wait()
+            except TimeoutError:
+                if process.returncode is not None:
+                    process.kill()
