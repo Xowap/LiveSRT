@@ -1,7 +1,10 @@
 """This is the module in charge of live audio capture"""
 
 import asyncio
+import contextlib
+import os
 import subprocess
+import sys
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,6 +25,32 @@ class MicInfo:
 
     index: int
     name: str
+
+
+@contextlib.contextmanager
+def ignore_stderr():
+    """
+    Diverts stderr because by default lots of junk gets logged by alsa and
+    friends for no fucking reason.
+    """
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    sys.stderr.flush()
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
+
+
+def make_pyaudio():
+    """Custom init for PyAudio so that it can stfu"""
+
+    with ignore_stderr():
+        return pyaudio.PyAudio()
 
 
 @dataclass(frozen=True)
@@ -78,7 +107,7 @@ class MicManager:
     """
 
     sample_rate: int = 16_000
-    p: pyaudio.PyAudio = field(init=False, default_factory=pyaudio.PyAudio)
+    p: pyaudio.PyAudio = field(init=False, default_factory=make_pyaudio)
 
     def make_stream_config(
         self,
