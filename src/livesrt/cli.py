@@ -1,5 +1,9 @@
+"""
+The logic specific to the CLI interface
+"""
+
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Literal
@@ -18,7 +22,13 @@ from livesrt.aai import AAI, StreamReceiver, Turn
 from livesrt.async_tools import run_sync
 from livesrt.mic import MicManager
 
-custom_theme = Theme({"info": "dim cyan", "warning": "magenta", "danger": "bold red"})
+custom_theme = Theme(
+    {
+        "info": "dim cyan",
+        "warning": "magenta",
+        "danger": "bold red",
+    }
+)
 console = Console(theme=custom_theme)
 
 
@@ -28,28 +38,43 @@ def validate_no_colon(ctx, param, value):
     """
 
     if ":" in value:
-        raise click.BadParameter("The character ':' is not allowed in the namespace.")
+        msg = "The character ':' is not allowed in the namespace."
+        raise click.BadParameter(msg)
 
     return value
 
 
 @dataclass
 class ApiKeyStore:
+    """
+    Utility class that serves to store API keys
+    """
+
     namespace: str
     system: str = "livesrt"
 
     def key(self, provider: str) -> str:
+        """Generates the key name used for storage of this provider"""
+
         return f"{self.namespace}:{provider}"
 
     def get(self, provider: str) -> str:
+        """Gets the API key for a provider, or None if it doesn't exist."""
+
         return keyring.get_password(self.system, self.key(provider))
 
     def set(self, provider: str, value: str) -> None:
+        """Sets the API key for a provider"""
+
         keyring.set_password(self.system, self.key(provider), value)
 
 
 @dataclass
 class Context:
+    """
+    Internal context of the CLI app
+    """
+
     namespace: str
     store: ApiKeyStore
 
@@ -64,6 +89,10 @@ class Context:
 )
 @click.pass_context
 def cli(ctx, namespace: str):
+    """
+    Main entrypoint of the whole thing
+    """
+
     ctx.obj = Context(
         namespace=namespace,
         store=ApiKeyStore(namespace),
@@ -71,6 +100,8 @@ def cli(ctx, namespace: str):
 
 
 class ProviderType(Enum):
+    """This is a provider for which we might want to register an API token"""
+
     ASSEMBLY_AI = "assembly_ai"
 
 
@@ -101,12 +132,18 @@ def set_token(obj: Context, provider, api_key):
     obj.store.set(provider, api_key)
 
     console.print(
-        f"\n[green]✔[/green] Configuration started for [bold cyan]{provider}[/bold cyan]"
+        f"\n[green]✔[/green] Configuration started for "
+        f"[bold cyan]{provider}[/bold cyan]"
     )
 
 
 @cli.command()
 def list_microphones():
+    """
+    Utility to list microphones, and beyond that, obtain their device ID so that
+    it can be used in the `transcribe` command.
+    """
+
     import pyaudio
 
     p = pyaudio.PyAudio()
@@ -164,7 +201,8 @@ def display_http_error(error: httpx.HTTPError) -> None:
         response_table.add_column()
         response_table.add_row(
             "Status:",
-            f"[{status_color}]{response.status_code}[/{status_color}] [dim]{response.reason_phrase}[/dim]",
+            f"[{status_color}]{response.status_code}[/{status_color}] "
+            f"[dim]{response.reason_phrase}[/dim]",
         )
 
         # Try to parse and display JSON response
@@ -242,12 +280,19 @@ def display_http_error(error: httpx.HTTPError) -> None:
     console.print()
 
 
+@dataclass
 class Receiver(StreamReceiver):
-    def __init__(self):
-        self.turn_count = 0
-        self.last_transcript = ""
+    """Our implementation of the stream receiver, which will print to the
+    console the things currently being said."""
+
+    turn_count: int = field(init=False, default=0)
+    last_transcript: str = field(init=False, default="")
 
     async def session_begins(self, session_id: uuid.UUID, expires_at: datetime) -> None:
+        """
+        Prints meta information about the session being started.
+        """
+
         # Create session info table
         info_table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
         info_table.add_column(style="dim")
@@ -271,6 +316,11 @@ class Receiver(StreamReceiver):
         console.print()
 
     async def turn(self, turn: Turn) -> None:
+        """
+        Receives updates about every turn and the current level of understanding
+        about them.
+        """
+
         # Skip empty transcripts
         if not turn.transcript.strip():
             return
@@ -298,7 +348,8 @@ class Receiver(StreamReceiver):
                 console.print(
                     f"  [dim]confidence:[/dim] [{confidence_color}]"
                     f"{'▰' * int(turn.end_of_turn_confidence * 10)}"
-                    f"{'▱' * (10 - int(turn.end_of_turn_confidence * 10))}[/{confidence_color}] "
+                    f"{'▱' * (10 - int(turn.end_of_turn_confidence * 10))}"
+                    f"[/{confidence_color}] "
                     f"[dim]{turn.end_of_turn_confidence:.1%}[/dim]"
                 )
 
@@ -324,11 +375,20 @@ class Receiver(StreamReceiver):
                 self.last_transcript = turn.transcript
 
     async def termination(
-        self, audio_duration: timedelta, session_duration: timedelta
+        self,
+        audio_duration: timedelta,
+        session_duration: timedelta,
     ) -> None:
-        # Create a summary table
+        """
+        When the stream ends, a recap table is created to know how much was
+        spent on this.
+        """
+
         summary_table = Table(
-            show_header=False, box=None, padding=(0, 1), pad_edge=False
+            show_header=False,
+            box=None,
+            padding=(0, 1),
+            pad_edge=False,
         )
         summary_table.add_column(style="dim")
         summary_table.add_column(style="cyan")
@@ -402,4 +462,5 @@ async def transcribe(
             await aai.stream(bits, receiver, sample_rate=mm.sample_rate)
     except httpx.HTTPError as e:
         display_http_error(e)
-        raise click.ClickException("HTTP request failed") from e
+        msg = "HTTP request failed"
+        raise click.ClickException(msg) from e
