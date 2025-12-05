@@ -106,10 +106,10 @@ class MicManager:
         for i in range(self.p.get_device_count()):
             device = self.p.get_device_info_by_index(i)
 
-            if device["maxInputChannels"] > 0:
+            if int(device["maxInputChannels"]) > 0:
                 out[i] = MicInfo(
                     index=i,
-                    name=device["name"],
+                    name=str(device["name"]),
                 )
 
         return out

@@ -27,6 +27,7 @@ dev = [
     "mypy",
     "ruff",
     "pytest",
+    "types-pyaudio",
 ]
 
 [build-system]
@@ -74,3 +75,10 @@ select = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pwinput"
+ignore_missing_imports = true

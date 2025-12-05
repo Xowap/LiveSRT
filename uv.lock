@@ -313,6 +313,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "types-pyaudio" },
 ]
 
 [package.metadata]
@@ -333,6 +334,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "types-pyaudio" },
 ]
 
 [[package]]
@@ -605,6 +607,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "types-pyaudio"
+version = "0.2.16.20250801"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/cf/d3e3457dcbc6292aa8f472c15d805dcb5c07c57a5037168d52197aecac1c/types_pyaudio-0.2.16.20250801.tar.gz", hash = "sha256:c6ff1b9681f67c1f14d8d86804b99fe5b1fa79f88c5a1ec0367fccfc183e095d", size = 9729, upload-time = "2025-08-01T03:48:36.441Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/dc/34727c5464ac7c72db569b0c9787303d13374667dc74568f46b4086a3943/types_pyaudio-0.2.16.20250801-py3-none-any.whl", hash = "sha256:1b6d293e0d511108b1d13575868e87fba6ea9056900aee4f8440e0fdc89f9f75", size = 8808, upload-time = "2025-08-01T03:48:35.331Z" },
 ]
 
 [[package]]

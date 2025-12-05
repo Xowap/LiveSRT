@@ -58,7 +58,7 @@ class ApiKeyStore:
 
         return f"{self.namespace}:{provider}"
 
-    def get(self, provider: str) -> str:
+    def get(self, provider: str) -> str | None:
         """Gets the API key for a provider, or None if it doesn't exist."""
 
         return keyring.get_password(self.system, self.key(provider))
