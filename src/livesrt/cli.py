@@ -20,8 +20,14 @@ from rich.theme import Theme
 from livesrt.async_tools import run_sync
 from livesrt.transcribe.audio_sources.mic import MicSourceFactory
 from livesrt.transcribe.audio_sources.replay_file import FileSourceFactory
-from livesrt.transcribe.base import AudioSource, TranscriptReceiver, Turn
+from livesrt.transcribe.base import (
+    AudioSource,
+    Transcripter,
+    TranscriptReceiver,
+    Turn,
+)
 from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
+from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
 
 custom_theme = Theme(
     {
@@ -104,6 +110,7 @@ class ProviderType(Enum):
     """This is a provider for which we might want to register an API token"""
 
     ASSEMBLY_AI = "assembly_ai"
+    ELEVENLABS = "elevenlabs"
 
 
 @cli.command()
@@ -382,9 +389,16 @@ class Receiver(TranscriptReceiver):
     required=False,
 )
 @click.option(
+    *["--provider", "-p"],
+    type=click.Choice([p.value for p in ProviderType], case_sensitive=False),
+    default=ProviderType.ASSEMBLY_AI.value,
+    help="The transcription provider to use.",
+)
+@click.option(
     *["--region", "-r"],
     type=click.Choice(["eu", "us"]),
     default="eu",
+    help="Region (AssemblyAI only)",
 )
 @click.option(
     *["--replay-file", "-f"],
@@ -399,15 +413,12 @@ class Receiver(TranscriptReceiver):
 @run_sync
 async def transcribe(
     obj: Context,
+    provider: str,
     region: Literal["eu", "us"],
     replay_file: str,
     device: int | None = None,
 ):
     """Transcribes live the audio from the microphone"""
-
-    if not (key := obj.store.get("assembly_ai")):
-        msg = "Assembly AI key not found, set it with the set-token command."
-        raise click.ClickException(msg)
 
     # Initialize Audio Source
     source: AudioSource
@@ -422,12 +433,33 @@ async def transcribe(
         source = mic_factory.create_source(device)
 
     # Initialize Transcripter
-    transcripter = AssemblyAITranscripter(api_key=key, region=region)
+    transcripter: Transcripter | None = None
+
+    if provider == ProviderType.ASSEMBLY_AI.value:
+        if not (key := obj.store.get("assembly_ai")):
+            msg = "Assembly AI key not found, set it with `set-token assembly_ai`."
+            raise click.ClickException(msg)
+        transcripter = AssemblyAITranscripter(api_key=key, region=region)
+
+    elif provider == ProviderType.ELEVENLABS.value:
+        if not (key := obj.store.get("elevenlabs")):
+            msg = "ElevenLabs key not found, set it with `set-token elevenlabs`."
+            raise click.ClickException(msg)
+        transcripter = ElevenLabsTranscripter(api_key=key)
+
+    else:
+        msg = f"Unknown provider: {provider}"
+        raise click.ClickException(msg)
+
     receiver = Receiver()
 
     try:
-        await transcripter.process(source, receiver)
+        if transcripter:
+            await transcripter.process(source, receiver)
     except httpx.HTTPError as e:
         display_http_error(e)
         msg = "HTTP request failed"
         raise click.ClickException(msg) from e
+    except RuntimeError as e:
+        # Handle provider-specific runtime errors (like Auth/Quota from ElevenLabs)
+        raise click.ClickException(str(e)) from e
