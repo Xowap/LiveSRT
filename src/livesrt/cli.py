@@ -2,9 +2,8 @@
 The logic specific to the CLI interface
 """
 
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import Literal
 
@@ -18,9 +17,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.theme import Theme
 
-from livesrt.aai import AAI, StreamReceiver, Turn
 from livesrt.async_tools import run_sync
-from livesrt.mic import MicManager
+from livesrt.transcribe.audio_sources.mic import MicSourceFactory
+from livesrt.transcribe.audio_sources.replay_file import FileSourceFactory
+from livesrt.transcribe.base import AudioSource, TranscriptReceiver, Turn
+from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
 
 custom_theme = Theme(
     {
@@ -143,19 +144,15 @@ def list_microphones():
     Utility to list microphones, and beyond that, obtain their device ID so that
     it can be used in the `transcribe` command.
     """
+    factory = MicSourceFactory()
+    devices = factory.list_devices()
 
-    import pyaudio
-
-    p = pyaudio.PyAudio()
     table = Table(title="Microphones", title_justify="left", title_style="bold")
     table.add_column("Index", justify="right", style="bold cyan")
     table.add_column("Name", justify="left", style="magenta")
 
-    for i in range(p.get_device_count()):
-        info = p.get_device_info_by_index(i)
-
-        if info.get("maxInputChannels") > 0:
-            table.add_row(str(i), str(info["name"]))
+    for i, info in devices.items():
+        table.add_row(str(i), info.name)
 
     console.print(table)
 
@@ -281,25 +278,28 @@ def display_http_error(error: httpx.HTTPError) -> None:
 
 
 @dataclass
-class Receiver(StreamReceiver):
-    """Our implementation of the stream receiver, which will print to the
-    console the things currently being said."""
+class Receiver(TranscriptReceiver):
+    """
+    Implementation of the TranscriptReceiver, which will print to the
+    console the things currently being said.
+    """
 
     turn_count: int = field(init=False, default=0)
     last_transcript: str = field(init=False, default="")
+    start_time: datetime | None = field(init=False, default=None)
 
-    async def session_begins(self, session_id: uuid.UUID, expires_at: datetime) -> None:
+    async def start(self) -> None:
         """
         Prints meta information about the session being started.
         """
+        self.start_time = datetime.now().astimezone()
 
         # Create session info table
         info_table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
         info_table.add_column(style="dim")
         info_table.add_column()
-        info_table.add_row("Session ID:", f"[cyan]{session_id}[/cyan]")
         info_table.add_row(
-            "Expires at:", f"[yellow]{expires_at.strftime('%H:%M:%S')}[/yellow]"
+            "Started at:", f"[cyan]{self.start_time.strftime('%H:%M:%S')}[/cyan]"
         )
         info_table.add_row("", "[dim]Listening... (Press CTRL+C to stop)[/dim]")
 
@@ -315,74 +315,38 @@ class Receiver(StreamReceiver):
         )
         console.print()
 
-    async def turn(self, turn: Turn) -> None:
+    async def receive_turn(self, turn: Turn) -> None:
         """
-        Receives updates about every turn and the current level of understanding
-        about them.
+        Receives updates about every turn and prints them to console.
         """
-
         # Skip empty transcripts
-        if not turn.transcript.strip():
+        if not turn.text.strip():
             return
 
-        # Determine if this is a new turn or an update
-        is_final = turn.end_of_turn
-
-        if is_final:
+        if turn.final:
             self.turn_count += 1
             # Final transcript - print with formatting
             console.print(
-                f"[bold cyan]►[/bold cyan] {turn.transcript}",
-                style="bold" if turn.is_formatted else "",
+                f"[bold cyan]►[/bold cyan] {turn.text}",
             )
-
-            # Show confidence if end of turn
-            if turn.end_of_turn_confidence > 0:
-                confidence_color = (
-                    "green"
-                    if turn.end_of_turn_confidence > 0.8
-                    else "yellow"
-                    if turn.end_of_turn_confidence > 0.5
-                    else "red"
-                )
-                console.print(
-                    f"  [dim]confidence:[/dim] [{confidence_color}]"
-                    f"{'▰' * int(turn.end_of_turn_confidence * 10)}"
-                    f"{'▱' * (10 - int(turn.end_of_turn_confidence * 10))}"
-                    f"[/{confidence_color}] "
-                    f"[dim]{turn.end_of_turn_confidence:.1%}[/dim]"
-                )
-
-            # Show language detection if available
-            if turn.language_code:
-                console.print(
-                    f"  [dim]language:[/dim] [magenta]{turn.language_code}[/magenta]",
-                    end="",
-                )
-                if turn.language_confidence:
-                    console.print(f" [dim]({turn.language_confidence:.1%})[/dim]")
-                else:
-                    console.print()
-
             console.print()  # Add spacing after final turns
             self.last_transcript = ""
         else:
             # Interim transcript - show with dim styling and overwrite previous
-            if turn.transcript != self.last_transcript:
+            if turn.text != self.last_transcript:
                 console.print(
-                    f"[dim cyan]…[/dim cyan] [dim]{turn.transcript}[/dim]", end="\r"
+                    f"[dim cyan]…[/dim cyan] [dim]{turn.text}[/dim]", end="\r"
                 )
-                self.last_transcript = turn.transcript
+                self.last_transcript = turn.text
 
-    async def termination(
-        self,
-        audio_duration: timedelta,
-        session_duration: timedelta,
-    ) -> None:
+    async def stop(self) -> None:
         """
-        When the stream ends, a recap table is created to know how much was
-        spent on this.
+        When the stream ends, a recap table is created.
         """
+        if not self.start_time:
+            return
+
+        duration = datetime.now().astimezone() - self.start_time
 
         summary_table = Table(
             show_header=False,
@@ -394,10 +358,7 @@ class Receiver(StreamReceiver):
         summary_table.add_column(style="cyan")
 
         summary_table.add_row("Total turns:", str(self.turn_count))
-        summary_table.add_row("Audio duration:", self._format_duration(audio_duration))
-        summary_table.add_row(
-            "Session duration:", self._format_duration(session_duration)
-        )
+        summary_table.add_row("Session duration:", str(duration).split(".")[0])
 
         console.print()
         console.print(
@@ -410,18 +371,6 @@ class Receiver(StreamReceiver):
             )
         )
         console.print()
-
-    @staticmethod
-    def _format_duration(td: timedelta) -> str:
-        """Format a timedelta as HH:MM:SS or MM:SS"""
-        total_seconds = int(td.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes:02d}:{seconds:02d}"
 
 
 @cli.command()
@@ -460,23 +409,24 @@ async def transcribe(
         msg = "Assembly AI key not found, set it with the set-token command."
         raise click.ClickException(msg)
 
-    mm = MicManager()
-    aai = AAI(key, region)
+    # Initialize Audio Source
+    source: AudioSource
+    if replay_file:
+        file_factory = FileSourceFactory(sample_rate=16_000, realtime=True)
+        source = file_factory.create_source(replay_file)
+    else:
+        mic_factory = MicSourceFactory(sample_rate=16_000)
+        if device is not None and not mic_factory.is_device_valid(device):
+            msg = f"Device #{device} is not a valid device."
+            raise click.BadParameter(msg, param_hint="--device")
+        source = mic_factory.create_source(device)
 
-    if device is not None and not await mm.is_device_valid(device):
-        msg = f"Device #{device} is not a valid device."
-        raise click.BadParameter(msg, param_hint="--device")
-
+    # Initialize Transcripter
+    transcripter = AssemblyAITranscripter(api_key=key, region=region)
     receiver = Receiver()
 
-    if replay_file:
-        source = mm.stream_file(replay_file)
-    else:
-        source = mm.stream_mic(device)
-
     try:
-        async with source as bits:
-            await aai.stream(bits, receiver, sample_rate=mm.sample_rate)
+        await transcripter.process(source, receiver)
     except httpx.HTTPError as e:
         display_http_error(e)
         msg = "HTTP request failed"
