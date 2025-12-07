@@ -30,6 +30,7 @@ from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
 from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
 from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscripter
 from livesrt.translate import MockTranslator, TranslatedTurn, Translator
+from livesrt.translate.local_llm import LocalLLM
 
 custom_theme = Theme(
     {
@@ -507,7 +508,7 @@ async def transcribe(
 ):
     """Transcribes live the audio from the microphone"""
 
-    source = await _make_audi_source(device, replay_file)
+    source = await _make_audio_source(device, replay_file)
     transcripter = await _make_transcripter(obj, language, provider, region)
 
     receiver = Receiver()
@@ -534,8 +535,8 @@ async def transcribe(
 )
 @click.option(
     "--translation-engine",
-    type=click.Choice(["mock"], case_sensitive=False),
-    default="mock",
+    type=click.Choice(["mock", "local-llm"], case_sensitive=False),
+    default="local-llm",
     help="The translation engine to use.",
     show_default=True,
 )
@@ -591,7 +592,7 @@ async def translate(
     Transcribes live audio and translates it to the target language.
     """
 
-    source = await _make_audi_source(device, replay_file)
+    source = await _make_audio_source(device, replay_file)
     transcripter = await _make_transcripter(obj, language, provider, region)
     translator = await _make_translator(translation_engine, lang_to, lang_from)
 
@@ -613,6 +614,8 @@ async def _make_translator(engine: str, lang_to: str, lang_from: str) -> Transla
         return await MockTranslator.create_translator(
             lang_to=lang_to, lang_from=lang_from
         )
+    elif engine == "local-llm":
+        return await LocalLLM.create_translator(lang_to=lang_to, lang_from=lang_from)
 
     msg = f"Unknown translation engine: {engine}"
     raise click.ClickException(msg)
@@ -656,7 +659,7 @@ async def _make_transcripter(
     return transcripter
 
 
-async def _make_audi_source(device: int | None, replay_file: str) -> AudioSource:
+async def _make_audio_source(device: int | None, replay_file: str) -> AudioSource:
     # Initialize Audio Source
     source: AudioSource
     if replay_file:

@@ -18,6 +18,8 @@ dependencies = [
     "pyaudio",
     "websockets",
     "pydantic",
+    "huggingface-hub~=1.2.1",
+    "llama-cpp-python~=0.3.16",
 ]
 
 [project.scripts]
@@ -29,6 +31,7 @@ dev = [
     "ruff",
     "pytest",
     "types-pyaudio",
+    "ipython",
 ]
 
 [build-system]
