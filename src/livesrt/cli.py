@@ -29,6 +29,7 @@ from livesrt.transcribe.base import (
 from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
 from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
 from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscripter
+from livesrt.translate import MockTranslator, TranslatedTurn, Translator
 
 custom_theme = Theme(
     {
@@ -383,6 +384,81 @@ class Receiver(TranscriptReceiver):
         console.print()
 
 
+@dataclass
+class TranslationReceiver(TranscriptReceiver):
+    """
+    Implementation of the TranscriptReceiver for Translation.
+    It accumulates turns, translates them all, and prints updates.
+    """
+
+    translator: Translator
+    _source_turns: dict[int, Turn] = field(default_factory=dict, init=False)
+    _trans_turns: dict[int, TranslatedTurn] = field(default_factory=dict, init=False)
+    _start_time: datetime | None = field(init=False, default=None)
+
+    async def start(self) -> None:
+        """Giving some feedback"""
+
+        self._start_time = datetime.now().astimezone()
+        info_table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
+        info_table.add_column(style="dim")
+        info_table.add_column()
+        info_table.add_row(
+            "Started at:", f"[cyan]{self._start_time.strftime('%H:%M:%S')}[/cyan]"
+        )
+        info_table.add_row("", "[dim]Translating... (Press CTRL+C to stop)[/dim]")
+
+        console.print()
+        console.print(
+            Panel(
+                info_table,
+                title="[bold green]TRANSLATION STARTED",
+                title_align="center",
+                border_style="bold green",
+                padding=(0, 1),
+            )
+        )
+        console.print()
+
+    async def stop(self) -> None:
+        """Upon stop we just print a new line"""
+        console.print()
+
+    async def receive_turn(self, turn: Turn) -> None:
+        """
+        When a turn update is received, we just re-translate the thing, figure
+        which turns have been updated and (re-)print what has changed.
+        """
+
+        self._source_turns[turn.id] = turn
+
+        trans_turns = {
+            t.id: t
+            for t in await self.translator.translate(list(self._source_turns.values()))
+        }
+
+        to_delete = self._trans_turns.keys() - trans_turns.keys()
+
+        for id_ in to_delete:
+            del self._trans_turns[id_]
+            console.print(f"[red bold]Deleted {id_}[/red]\n")
+
+        for translated_turn in trans_turns.values():
+            if (
+                translated_turn.id in self._trans_turns
+                and translated_turn.text == self._trans_turns[translated_turn.id].text
+            ):
+                continue
+
+            console.print(
+                f"> [bold]#{translated_turn.id}[/bold] "
+                f"[green bold]{translated_turn.speaker}[/green bold]: "
+                f"[white]{translated_turn.text}[/white]\n"
+            )
+
+        self._trans_turns = trans_turns
+
+
 @cli.command()
 @click.option(
     *["--device", "-d"],
@@ -446,6 +522,100 @@ async def transcribe(
     except RuntimeError as e:
         # Handle provider-specific runtime errors
         raise click.ClickException(str(e)) from e
+
+
+@cli.command()
+@click.argument("lang_to", type=str)
+@click.option(
+    "--lang-from",
+    type=str,
+    default="",
+    help="The language to translate from (optional, auto-detect if omitted).",
+)
+@click.option(
+    "--translation-engine",
+    type=click.Choice(["mock"], case_sensitive=False),
+    default="mock",
+    help="The translation engine to use.",
+    show_default=True,
+)
+@click.option(
+    *["--device", "-d"],
+    type=int,
+    default=None,
+    help="The index of the device to use.",
+    required=False,
+)
+@click.option(
+    *["--provider", "-p"],
+    type=click.Choice([p.value for p in ProviderType], case_sensitive=False),
+    default=ProviderType.ASSEMBLY_AI.value,
+    help="The transcription provider to use.",
+)
+@click.option(
+    *["--region", "-r"],
+    type=click.Choice(["eu", "us"]),
+    default="eu",
+    help="Region (AssemblyAI only)",
+)
+@click.option(
+    *["--language", "-l"],
+    type=str,
+    required=False,
+    default=None,
+    help="Language code (Mandatory for Speechmatics, e.g. 'en', 'fr').",
+)
+@click.option(
+    *["--replay-file", "-f"],
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "If specified, the content of this file will be used instead of the "
+        "actual microphone. It still goes through the same API, this is mostly "
+        "useful for debugging purposes. Requires `ffmpeg`."
+    ),
+)
+@click.pass_obj
+@run_sync
+async def translate(
+    obj: Context,
+    lang_to: str,
+    lang_from: str,
+    translation_engine: str,
+    provider: str,
+    region: Literal["eu", "us"],
+    language: str | None,
+    replay_file: str,
+    device: int | None = None,
+):
+    """
+    Transcribes live audio and translates it to the target language.
+    """
+
+    source = await _make_audi_source(device, replay_file)
+    transcripter = await _make_transcripter(obj, language, provider, region)
+    translator = await _make_translator(translation_engine, lang_to, lang_from)
+
+    receiver = TranslationReceiver(translator=translator)
+
+    try:
+        if transcripter:
+            await transcripter.process(source, receiver)
+    except httpx.HTTPError as e:
+        display_http_error(e)
+        msg = "HTTP request failed"
+        raise click.ClickException(msg) from e
+    except RuntimeError as e:
+        raise click.ClickException(str(e)) from e
+
+
+async def _make_translator(engine: str, lang_to: str, lang_from: str) -> Translator:
+    if engine == "mock":
+        return await MockTranslator.create_translator(
+            lang_to=lang_to, lang_from=lang_from
+        )
+
+    msg = f"Unknown translation engine: {engine}"
+    raise click.ClickException(msg)
 
 
 async def _make_transcripter(

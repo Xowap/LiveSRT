@@ -116,7 +116,7 @@ def transform_as_words(words: list[TempWord]) -> list[Word]:
             out.append(
                 Word(
                     type="spacing",
-                    text=word.alternatives[0].content,
+                    text=" ",
                     speaker=word.alternatives[0].speaker,
                     start=timedelta(seconds=word.start_time),
                     end=timedelta(seconds=word.start_time),
