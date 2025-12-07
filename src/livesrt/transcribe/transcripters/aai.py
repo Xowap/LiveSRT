@@ -5,6 +5,7 @@ AssemblyAI implementation of the Transcripter interface.
 import asyncio
 import json
 import logging
+from asyncio import CancelledError
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -183,7 +184,12 @@ class AssemblyAITranscripter(Transcripter):
             except json.JSONDecodeError:
                 continue
 
-            await self._handle_message(msg, receiver, term_event)
+            try:
+                await self._handle_message(msg, receiver, term_event)
+            except (CancelledError, SystemExit):
+                raise
+            except Exception:
+                logger.exception("Could not handle message")
 
     async def _handle_message(
         self,

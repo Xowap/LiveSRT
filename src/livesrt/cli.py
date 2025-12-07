@@ -28,6 +28,7 @@ from livesrt.transcribe.base import (
 )
 from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
 from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
+from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscripter
 
 custom_theme = Theme(
     {
@@ -111,6 +112,7 @@ class ProviderType(Enum):
 
     ASSEMBLY_AI = "assembly_ai"
     ELEVENLABS = "elevenlabs"
+    SPEECHMATICS = "speechmatics"
 
 
 @cli.command()
@@ -326,6 +328,7 @@ class Receiver(TranscriptReceiver):
         """
         Receives updates about every turn and prints them to console.
         """
+
         # Skip empty transcripts
         if not turn.text.strip():
             return
@@ -401,6 +404,13 @@ class Receiver(TranscriptReceiver):
     help="Region (AssemblyAI only)",
 )
 @click.option(
+    *["--language", "-l"],
+    type=str,
+    required=False,
+    default=None,
+    help="Language code (Mandatory for Speechmatics, e.g. 'en', 'fr').",
+)
+@click.option(
     *["--replay-file", "-f"],
     type=click.Path(exists=True, dir_okay=False),
     help=(
@@ -415,41 +425,14 @@ async def transcribe(
     obj: Context,
     provider: str,
     region: Literal["eu", "us"],
+    language: str | None,
     replay_file: str,
     device: int | None = None,
 ):
     """Transcribes live the audio from the microphone"""
 
-    # Initialize Audio Source
-    source: AudioSource
-    if replay_file:
-        file_factory = FileSourceFactory(sample_rate=16_000, realtime=True)
-        source = file_factory.create_source(replay_file)
-    else:
-        mic_factory = MicSourceFactory(sample_rate=16_000)
-        if device is not None and not mic_factory.is_device_valid(device):
-            msg = f"Device #{device} is not a valid device."
-            raise click.BadParameter(msg, param_hint="--device")
-        source = mic_factory.create_source(device)
-
-    # Initialize Transcripter
-    transcripter: Transcripter | None = None
-
-    if provider == ProviderType.ASSEMBLY_AI.value:
-        if not (key := obj.store.get("assembly_ai")):
-            msg = "Assembly AI key not found, set it with `set-token assembly_ai`."
-            raise click.ClickException(msg)
-        transcripter = AssemblyAITranscripter(api_key=key, region=region)
-
-    elif provider == ProviderType.ELEVENLABS.value:
-        if not (key := obj.store.get("elevenlabs")):
-            msg = "ElevenLabs key not found, set it with `set-token elevenlabs`."
-            raise click.ClickException(msg)
-        transcripter = ElevenLabsTranscripter(api_key=key)
-
-    else:
-        msg = f"Unknown provider: {provider}"
-        raise click.ClickException(msg)
+    source = await _make_audi_source(device, replay_file)
+    transcripter = await _make_transcripter(obj, language, provider, region)
 
     receiver = Receiver()
 
@@ -461,5 +444,58 @@ async def transcribe(
         msg = "HTTP request failed"
         raise click.ClickException(msg) from e
     except RuntimeError as e:
-        # Handle provider-specific runtime errors (like Auth/Quota from ElevenLabs)
+        # Handle provider-specific runtime errors
         raise click.ClickException(str(e)) from e
+
+
+async def _make_transcripter(
+    context: Context, language: str | None, provider: str, region: Literal["eu", "us"]
+) -> Transcripter | None:
+    # Initialize Transcripter
+    transcripter: Transcripter | None = None
+
+    if provider == ProviderType.ASSEMBLY_AI.value:
+        if not (key := context.store.get("assembly_ai")):
+            msg = "Assembly AI key not found, set it with `set-token assembly_ai`."
+            raise click.ClickException(msg)
+        transcripter = AssemblyAITranscripter(api_key=key, region=region)
+
+    elif provider == ProviderType.ELEVENLABS.value:
+        if not (key := context.store.get("elevenlabs")):
+            msg = "ElevenLabs key not found, set it with `set-token elevenlabs`."
+            raise click.ClickException(msg)
+        transcripter = ElevenLabsTranscripter(api_key=key)
+
+    elif provider == ProviderType.SPEECHMATICS.value:
+        if not (key := context.store.get("speechmatics")):
+            msg = "Speechmatics key not found, set it with `set-token speechmatics`."
+            raise click.ClickException(msg)
+
+        if not language:
+            msg = (
+                "Language is mandatory for Speechmatics. Use --language or -l "
+                "(e.g. 'en')."
+            )
+            raise click.BadParameter(msg, param_hint="--language")
+
+        transcripter = SpeechmaticsTranscripter(api_key=key, language=language)
+
+    else:
+        msg = f"Unknown provider: {provider}"
+        raise click.ClickException(msg)
+    return transcripter
+
+
+async def _make_audi_source(device: int | None, replay_file: str) -> AudioSource:
+    # Initialize Audio Source
+    source: AudioSource
+    if replay_file:
+        file_factory = FileSourceFactory(sample_rate=16_000, realtime=True)
+        source = file_factory.create_source(replay_file)
+    else:
+        mic_factory = MicSourceFactory(sample_rate=16_000)
+        if device is not None and not mic_factory.is_device_valid(device):
+            msg = f"Device #{device} is not a valid device."
+            raise click.BadParameter(msg, param_hint="--device")
+        source = mic_factory.create_source(device)
+    return source

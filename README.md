@@ -8,6 +8,7 @@ Currently supported providers:
 
 - **AssemblyAI** (Streaming API) - _Default_
 - **ElevenLabs** (Realtime Speech-to-Text)
+- **Speechmatics** (Realtime API)
 
 ## 🚀 Quick Start
 
@@ -39,6 +40,21 @@ using `uvx`.
 2.  **Start transcribing:**
     ```bash
     uvx livesrt transcribe --provider elevenlabs
+    ```
+
+### Using Speechmatics
+
+1.  **Set your API key:**
+
+    ```bash
+    uvx livesrt set-token speechmatics
+    ```
+
+2.  **Start transcribing:** _Note: You must specify the language code (e.g.,
+    'en', 'fr') for Speechmatics._
+
+    ```bash
+    uvx livesrt transcribe --provider speechmatics --language en
     ```
 
 Press `Ctrl+C` to stop the transcription session.
@@ -92,7 +108,8 @@ All commands start with `livesrt`.
 
 Sets the API token for a specific transcription provider.
 
-- `<provider>`: The name of the provider. Choices: `assembly_ai`, `elevenlabs`.
+- `<provider>`: The name of the provider. Choices: `assembly_ai`, `elevenlabs`,
+  `speechmatics`.
 - `--api-key <key>`, `-k <key>`: (Optional) Your secret API key. If not
   provided, you will be securely prompted to enter it.
 
@@ -109,6 +126,8 @@ Starts live transcription.
 - `--device`, `-d <index>`: The index of the microphone device to use.
 - `--replay-file`, `-f <path>`: Use a file as the audio source instead of the
   microphone.
+- `--language`, `-l <code >`: Language code (e.g., 'en', 'fr'). **Mandatory**
+  when using Speechmatics.
 - `--region`, `-r`: The API region (only applies to AssemblyAI). Choices: `eu`
   (default), `us`.
 
@@ -145,6 +164,7 @@ The project uses a modular architecture defined in `src/livesrt/transcribe/`:
 - **`src/livesrt/transcribe/transcripters/`**:
     - **`aai.py`**: AssemblyAI Streaming API implementation.
     - **`elevenlabs.py`**: ElevenLabs Realtime API implementation.
+    - **`speechmatics.py`**: Speechmatics Realtime API implementation.
 - **`src/livesrt/transcribe/audio_sources/`**:
     - **`mic.py`**: Captures live audio using `pyaudio`.
     - **`replay_file.py`**: Streams audio from files using `ffmpeg`.

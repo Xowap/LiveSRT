@@ -17,6 +17,7 @@ dependencies = [
     "pwinput",
     "pyaudio",
     "websockets",
+    "pydantic",
 ]
 
 [project.scripts]
@@ -68,7 +69,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D", "UP"]
+"tests/**/*.py" = ["D", "UP", "S101"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "requests".msg = "Use `httpx` instead, which has timeouts by default."

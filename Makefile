@@ -1,4 +1,4 @@
-.PHONY: clean prettier format lint types
+.PHONY: clean prettier format lint types tests
 
 clean: prettier format lint types
 
@@ -13,3 +13,6 @@ lint:
 
 types:
 	uv run mypy src
+
+tests:
+	uv run pytest

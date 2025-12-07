@@ -75,7 +75,7 @@ class Word:
         A speaker label (if identified)
     """
 
-    type: Literal["word", "spacing"]
+    type: Literal["word", "spacing", "punctuation"]
     text: str
     start: timedelta | None = None
     end: timedelta | None = None
