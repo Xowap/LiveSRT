@@ -18,6 +18,7 @@ dependencies = [
     "pyaudio",
     "websockets",
     "pydantic",
+    "tenacity",
     "huggingface-hub~=1.2.1",
     "llama-cpp-python~=0.3.16",
 ]

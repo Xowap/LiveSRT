@@ -2,6 +2,7 @@
 The logic specific to the CLI interface
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -31,6 +32,7 @@ from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
 from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscripter
 from livesrt.translate import MockTranslator, TranslatedTurn, Translator
 from livesrt.translate.local_llm import LocalLLM
+from livesrt.translate.remote_llm import RemoteLLM
 
 custom_theme = Theme(
     {
@@ -115,6 +117,8 @@ class ProviderType(Enum):
     ASSEMBLY_AI = "assembly_ai"
     ELEVENLABS = "elevenlabs"
     SPEECHMATICS = "speechmatics"
+    GROQ = "groq"
+    MISTRAL = "mistral"
 
 
 @cli.command()
@@ -395,7 +399,65 @@ class TranslationReceiver(TranscriptReceiver):
     translator: Translator
     _source_turns: dict[int, Turn] = field(default_factory=dict, init=False)
     _trans_turns: dict[int, TranslatedTurn] = field(default_factory=dict, init=False)
+    _printed_turns: dict[int, Turn] = field(default_factory=dict, init=False)
     _start_time: datetime | None = field(init=False, default=None)
+    _turn_printer: asyncio.Task | None = field(init=False, default=None)
+    _new_content: asyncio.Event = field(init=False, default_factory=asyncio.Event)
+
+    async def print_source_turns(self):
+        for turn in self._source_turns.values():
+            old_turn = self._printed_turns.get(turn.id)
+
+            if old_turn and old_turn.text == turn.text:
+                continue
+
+            console.print(
+                f"@ [bold]?{turn.id}[/bold] "
+                f"[dim]{turn.text}[/dim]\n"
+            )
+
+        self._printed_turns = dict(self._source_turns)
+
+    async def print_new_turns(self):
+        """
+        Because the translation can take some time, instead of printing every
+        single iteration there is just this loop that polls for content and
+        prints it when it happens. It will only process the latest version of
+        the content, not the intermediary ones.
+        """
+
+        while await self._new_content.wait():
+            self._new_content.clear()
+            await self.print_source_turns()
+
+            trans_turns = {
+                t.id: t
+                for t in await self.translator.translate(
+                    list(self._source_turns.values())
+                )
+            }
+
+            to_delete = self._trans_turns.keys() - trans_turns.keys()
+
+            for id_ in to_delete:
+                del self._trans_turns[id_]
+                console.print(f"[red bold]Deleted {id_}[/red]\n")
+
+            for translated_turn in trans_turns.values():
+                if (
+                    translated_turn.id in self._trans_turns
+                    and translated_turn.text
+                    == self._trans_turns[translated_turn.id].text
+                ):
+                    continue
+
+                console.print(
+                    f"> [bold]#{translated_turn.id}[/bold] "
+                    f"[green bold]{translated_turn.speaker}[/green bold]: "
+                    f"[white]{translated_turn.text}[/white]\n"
+                )
+
+            self._trans_turns = trans_turns
 
     async def start(self) -> None:
         """Giving some feedback"""
@@ -421,6 +483,8 @@ class TranslationReceiver(TranscriptReceiver):
         )
         console.print()
 
+        self._turn_printer = asyncio.create_task(self.print_new_turns())
+
     async def stop(self) -> None:
         """Upon stop we just print a new line"""
         console.print()
@@ -432,32 +496,7 @@ class TranslationReceiver(TranscriptReceiver):
         """
 
         self._source_turns[turn.id] = turn
-
-        trans_turns = {
-            t.id: t
-            for t in await self.translator.translate(list(self._source_turns.values()))
-        }
-
-        to_delete = self._trans_turns.keys() - trans_turns.keys()
-
-        for id_ in to_delete:
-            del self._trans_turns[id_]
-            console.print(f"[red bold]Deleted {id_}[/red]\n")
-
-        for translated_turn in trans_turns.values():
-            if (
-                translated_turn.id in self._trans_turns
-                and translated_turn.text == self._trans_turns[translated_turn.id].text
-            ):
-                continue
-
-            console.print(
-                f"> [bold]#{translated_turn.id}[/bold] "
-                f"[green bold]{translated_turn.speaker}[/green bold]: "
-                f"[white]{translated_turn.text}[/white]\n"
-            )
-
-        self._trans_turns = trans_turns
+        self._new_content.set()
 
 
 @cli.command()
@@ -535,9 +574,15 @@ async def transcribe(
 )
 @click.option(
     "--translation-engine",
-    type=click.Choice(["mock", "local-llm"], case_sensitive=False),
+    type=click.Choice(["mock", "local-llm", "remote-llm"], case_sensitive=False),
     default="local-llm",
     help="The translation engine to use.",
+    show_default=True,
+)
+@click.option(
+    "--model",
+    default="groq/openai/gpt-oss-120b",
+    help="Name of the model for the remote LLM",
     show_default=True,
 )
 @click.option(
@@ -586,6 +631,7 @@ async def translate(
     region: Literal["eu", "us"],
     language: str | None,
     replay_file: str,
+    model: str = "",
     device: int | None = None,
 ):
     """
@@ -594,7 +640,9 @@ async def translate(
 
     source = await _make_audio_source(device, replay_file)
     transcripter = await _make_transcripter(obj, language, provider, region)
-    translator = await _make_translator(translation_engine, lang_to, lang_from)
+    translator = await _make_translator(
+        translation_engine, lang_to, lang_from, model, obj.store
+    )
 
     receiver = TranslationReceiver(translator=translator)
 
@@ -609,13 +657,32 @@ async def translate(
         raise click.ClickException(str(e)) from e
 
 
-async def _make_translator(engine: str, lang_to: str, lang_from: str) -> Translator:
+async def _make_translator(
+    engine: str,
+    lang_to: str,
+    lang_from: str,
+    model: str,
+    keys: ApiKeyStore,
+) -> Translator:
     if engine == "mock":
         return await MockTranslator.create_translator(
             lang_to=lang_to, lang_from=lang_from
         )
     elif engine == "local-llm":
         return await LocalLLM.create_translator(lang_to=lang_to, lang_from=lang_from)
+    elif engine == "remote-llm":
+        provider, _, _ = model.partition("/")
+
+        if not (key := keys.get(provider)):
+            msg = f"No key stored for {provider}"
+            raise click.ClickException(msg)
+
+        return await RemoteLLM.create_translator(
+            lang_to=lang_to,
+            lang_from=lang_from,
+            model=model,
+            api_key=key,
+        )
 
     msg = f"Unknown translation engine: {engine}"
     raise click.ClickException(msg)
