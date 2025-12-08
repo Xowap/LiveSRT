@@ -119,6 +119,9 @@ class ProviderType(Enum):
     SPEECHMATICS = "speechmatics"
     GROQ = "groq"
     MISTRAL = "mistral"
+    GOOGLE = "google"
+    DEEPINFRA = "deepinfra"
+    OPENROUTER = "openrouter"
 
 
 @cli.command()

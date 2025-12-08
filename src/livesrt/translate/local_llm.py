@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Console
+
 from livesrt.utils import ignore_stderr
 
 from ..async_tools import sync_to_async
@@ -18,8 +20,13 @@ if TYPE_CHECKING:
     from ..transcribe.base import Turn
 
 
+console = Console()
+
+
 MODELS = {
     "qwen-3:14b:q4-k-m": ("unsloth/Qwen3-14B-GGUF", "Qwen3-14B-Q4_K_M.gguf"),
+    "ministral:8b:q4-k-m": ("bartowski/Ministral-8B-Instruct-2410-GGUF", "Ministral-8B-Instruct-2410-Q4_K_M.gguf"),
+    "ministral:3b:q4-k-m": ("mistralai/Ministral-3-3B-Instruct-2512-GGUF", "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf"),
 }
 
 
@@ -33,7 +40,7 @@ def download_model(model: str) -> str:
 
 
 @sync_to_async
-def init_model(model_path: str, context_size: int = 42_000) -> Llama:
+def init_model(model_path: str, context_size: int = 10_000) -> Llama:
     """Initialize a model from a local path."""
     from llama_cpp import Llama
 
@@ -68,7 +75,7 @@ class LocalLLM(Translator):
         cls, lang_to: str, lang_from: str = "", **extra: Any
     ) -> Translator:
         """Create a new translator."""
-        model = extra.get("model", "qwen-3:14b:q4-k-m")
+        model = extra.get("model", "ministral:3b:q4-k-m")
         model_path = await download_model(model)
         llm = await init_model(model_path)
 
@@ -80,7 +87,9 @@ class LocalLLM(Translator):
 
     @sync_to_async
     def _next_turn(self, turns: list[Turn]) -> bool:
-        if not turns or not turns[0].words:
+        full_turns = [t for t in turns if t.words]
+
+        if not full_turns:
             return False
 
         system = (
@@ -102,7 +111,7 @@ class LocalLLM(Translator):
         missing_turns = False
         translated_turn = None
 
-        for turn in turns:
+        for turn in full_turns:
             sentences = []
 
             for speaker, words in groupby(turn.words, lambda w: w.speaker):
@@ -123,7 +132,22 @@ class LocalLLM(Translator):
             entry = self.known_turns.get(turn.id)
 
             if entry and entry.turn.words == turn.words:
-                conversation.append(self.known_turns[turn.id].completion)
+                # Append the assistant's previous response
+                completion = self.known_turns[turn.id].completion
+                conversation.append(completion)
+
+                # --- FIX START ---
+                # If the previous response was a tool call, we MUST append a
+                # corresponding 'tool' role message to satisfy the chat template
+                # structure (User -> Assistant(Tool) -> Tool -> User).
+                if completion.get("tool_calls"):
+                    for tool_call in completion["tool_calls"]:
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": '{"status": "logged"}',  # Dummy content to satisfy history
+                        })
+                # --- FIX END ---
             else:
                 missing_turns = True
                 translated_turn = turn
@@ -175,12 +199,6 @@ class LocalLLM(Translator):
         completion = self.llm.create_chat_completion(
             messages=conversation,  # type: ignore
             tools=tools,  # type: ignore
-            tool_choice={
-                "type": "function",
-                "function": {
-                    "name": "translate",
-                },
-            },
         )
 
         translated = []
@@ -212,7 +230,7 @@ class LocalLLM(Translator):
         entry = TurnEntry(
             turn=translated_turn,
             translated=translated,
-            completion=cast("dict", completion),
+            completion=cast("dict", completion["choices"][0]["message"]),
         )
         self.known_turns[translated_turn.id] = entry
 
@@ -220,7 +238,10 @@ class LocalLLM(Translator):
 
     async def translate(self, turns: list[Turn]) -> list[TranslatedTurn]:
         """Translate a list of turns."""
-        while await self._next_turn(turns):
-            pass
+        try:
+            while await self._next_turn(turns):
+                pass
 
-        return [tt for entry in self.known_turns.values() for tt in entry.translated]
+            return [tt for entry in self.known_turns.values() for tt in entry.translated]
+        except Exception:
+            console.print_exception(show_locals=True)

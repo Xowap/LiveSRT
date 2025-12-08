@@ -67,6 +67,9 @@ async def call_completion(
     base_url = {
         "groq": "https://api.groq.com/openai/v1/chat/completions",
         "mistral": "https://api.mistral.ai/v1/chat/completions",
+        "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "deepinfra": "https://api.deepinfra.com/v1/openai/chat/completions",
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     }[provider]
 
     client: httpx.AsyncClient
@@ -81,12 +84,10 @@ async def call_completion(
             tool_choice=tool_choice,
         )
 
-        print('req start')
         resp = await client.post(
             base_url,
             json=req_body,
         )
-        print('req done')
 
         if 400 <= resp.status_code < 500:
             p_req = Panel(
@@ -130,6 +131,7 @@ class RemoteLLM(Translator):
 
     async def _next_turn(self, turns: list[Turn]) -> bool:
         full_turns = [t for t in turns if t.words]
+        turn_id = 0
 
         if not full_turns:
             return False
@@ -174,7 +176,24 @@ class RemoteLLM(Translator):
             entry = self.known_turns.get(turn.id)
 
             if entry and entry.turn.words == turn.words:
-                conversation.append(self.known_turns[turn.id].completion)
+                turn_id = entry.turn.id + 1
+                conversation.append(entry.completion)
+
+                if "tool_calls" in entry.completion:
+                    # 1. Add the "tool" outputs
+                    for tool_call in (entry.completion["tool_calls"] or []):
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": "Translation recorded"
+                        })
+
+                    # 2. FIX: Add dummy assistant message to satisfy Mistral protocol
+                    # This ensures the sequence is User -> Assistant -> Tool -> Assistant -> User
+                    conversation.append({
+                        "role": "assistant",
+                        "content": " "
+                    })
             else:
                 missing_turns = True
                 translated_turn = turn
@@ -234,7 +253,6 @@ class RemoteLLM(Translator):
         # console.print(panel)
 
         translated = []
-        turn_id = 0
 
         if not translated_turn:
             return False
