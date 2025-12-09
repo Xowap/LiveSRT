@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Literal
 
 import httpx
 from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
 from tenacity import (
     retry,
     retry_if_exception,
@@ -89,9 +87,34 @@ async def call_completion(
 
     client: httpx.AsyncClient
     async with httpx.AsyncClient(
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://github.com/Xowap/LiveSRT",
+            "X-Title": "LiveSRT",
+        },
         timeout=5,
     ) as client:
+        # OpenRouter caching: Use structured system prompt with cache_control
+        if provider == "openrouter" and "anthropic" in model_id:
+            new_messages = []
+            for item in messages:
+                if item["role"] == "system" and isinstance(item["content"], str):
+                    new_messages.append(
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": item["content"],
+                                    "cache_control": {"type": "ephemeral"},
+                                }
+                            ],
+                        }
+                    )
+                else:
+                    new_messages.append(item)
+            messages = new_messages
+
         req_body = dict(
             model=model_id,
             messages=messages,
@@ -105,18 +128,11 @@ async def call_completion(
         )
 
         if 400 <= resp.status_code < 500:
-            p_req = Panel(
-                JSON.from_data(req_body),
-                title="Request",
-                border_style="red",
+            logger.error(
+                "API Request Error:\nRequest: %s\nResponse: %s",
+                json.dumps(req_body, indent=2),
+                resp.text,
             )
-            console.print(p_req)
-            p_resp = Panel(
-                JSON(resp.text),
-                title="Response (with error)",
-                border_style="red",
-            )
-            console.print(p_resp)
 
         resp.raise_for_status()
 

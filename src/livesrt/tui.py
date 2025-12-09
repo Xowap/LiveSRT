@@ -3,14 +3,16 @@ TUI implementation for LiveSRT
 """
 
 import json
+import logging
 from typing import ClassVar
 
 from rich.syntax import Syntax
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.logging import TextualHandler
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Static
+from textual.widgets import Button, Footer, Header, Log, Static
 
 from livesrt.transcribe.base import (
     AudioSource,
@@ -201,12 +203,20 @@ class LiveSrtApp(App):
     DebugEntry:hover {
         background: $primary 30%;
     }
+    #log-panel {
+        height: 20%;
+        dock: bottom;
+        border-top: solid $secondary;
+        background: $surface;
+        display: none;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [  # type: ignore
         Binding("q", "quit", "Quit"),
         Binding("s", "toggle_autoscroll", "Toggle Auto-Scroll"),
         Binding("d", "toggle_debug", "Debug"),
+        Binding("l", "toggle_log", "Log"),
     ]
 
     auto_scroll: bool = True
@@ -221,6 +231,14 @@ class LiveSrtApp(App):
         """Toggle debug panel."""
         panel = self.query_one(DebugPanel)
         panel.toggle_class("-open")
+
+    def action_toggle_log(self) -> None:
+        """Toggle log panel."""
+        panel = self.query_one("#log-panel", Log)
+        if panel.styles.display == "none":
+            panel.styles.display = "block"
+        else:
+            panel.styles.display = "none"
 
     def __init__(
         self,
@@ -244,11 +262,24 @@ class LiveSrtApp(App):
         """Compose the application layout."""
         yield Header()
         yield VerticalScroll(id="content")
+        yield Log(id="log-panel")
         yield DebugPanel(id="debug-panel")
         yield Footer()
 
     async def on_mount(self):
         """Handle app mount event."""
+        # Configure logging
+        handler = TextualHandler()
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.WARNING)
+        root_logger.addHandler(handler)
+
+        # Ensure livesrt logger is set to DEBUG
+        logging.getLogger("livesrt").setLevel(logging.DEBUG)
+
+        # Test log to verify it's working
+        logging.getLogger("livesrt").info("Logging initialized.")
+
         self.title = "LiveSRT"
         if self.translator:
             self.sub_title = "Translation Mode"
