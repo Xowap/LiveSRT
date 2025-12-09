@@ -2,11 +2,14 @@
 Translation module: interfaces and implementations
 """
 
-from .base import TranslatedTurn, Translator
-from .mock import MockTranslator
+from .base import TranslatedTurn, TranslationReceiver, Translator
+from .local_llm import LocalLLM
+from .remote_llm import RemoteLLM
 
 __all__ = [
-    "MockTranslator",
+    "LocalLLM",
+    "RemoteLLM",
     "TranslatedTurn",
+    "TranslationReceiver",
     "Translator",
 ]

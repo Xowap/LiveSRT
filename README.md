@@ -1,135 +1,136 @@
-# LiveSRT: Live Speech-to-Text Transcription
+# LiveSRT: Live Speech-to-Text & Translation
 
 LiveSRT is a modular command-line interface (CLI) tool for real-time
-speech-to-text transcription. It captures audio from your microphone (or a file)
-and streams it to state-of-the-art AI transcription providers.
+speech-to-text transcription and translation. It captures audio from your
+microphone (or a file), streams it to state-of-the-art AI transcription
+providers, and uses Large Language Models (LLMs) to correct and translate the
+output on the fly.
 
-Currently supported providers:
+## ✨ Features
+
+- **Live Transcription:** Real-time speech-to-text using top-tier providers.
+- **Live Translation:** Translate speech instantly using LLMs (Local or Remote).
+- **Intelligent Post-processing:** Uses LLMs to clean up stutters, fix ASR
+  errors, and separate speakers.
+- **Audio Sources:** Support for microphones and audio file replay (via ffmpeg).
+
+## 🔌 Supported Providers
+
+### Transcription (ASR)
 
 - **AssemblyAI** (Streaming API) - _Default_
 - **ElevenLabs** (Realtime Speech-to-Text)
 - **Speechmatics** (Realtime API)
 
+### Translation (LLMs)
+
+- **Local LLMs:** Runs locally via `llama.cpp` (e.g., Ministral, Qwen).
+- **Remote LLMs:** Support for Groq, Mistral, Google Gemini, DeepInfra, and
+  OpenRouter.
+
 ## 🚀 Quick Start
 
 As this is a PyPI package, you can run it directly without any installation
-using `uvx`.
+using `uvx` (or install via pip).
 
-### Using AssemblyAI (Default)
+### 1. Basic Transcription
 
-1.  **Set your API key:**
-
+1.  **Set your Transcription API key (AssemblyAI is default):**
     ```bash
     uvx livesrt set-token assembly_ai
-    # You will be prompted to enter your API key securely.
     ```
-
 2.  **Start transcribing:**
     ```bash
     uvx livesrt transcribe
     ```
 
-### Using ElevenLabs
+### 2. Live Translation (Local LLM)
 
-1.  **Set your API key:**
-
-    ```bash
-    uvx livesrt set-token elevenlabs
-    ```
-
-2.  **Start transcribing:**
-    ```bash
-    uvx livesrt transcribe --provider elevenlabs
-    ```
-
-### Using Speechmatics
-
-1.  **Set your API key:**
-
-    ```bash
-    uvx livesrt set-token speechmatics
-    ```
-
-2.  **Start transcribing:** _Note: You must specify the language code (e.g.,
-    'en', 'fr') for Speechmatics._
-
-    ```bash
-    uvx livesrt transcribe --provider speechmatics --language en
-    ```
-
-Press `Ctrl+C` to stop the transcription session.
-
-## 💡 Scenarios
-
-Here are some common ways you might use `livesrt`:
-
-### Using a specific microphone
-
-If you have multiple microphones and want to use one other than the system
-default:
-
-1.  **List available microphones:**
-
-    ```bash
-    uvx livesrt list-microphones
-    ```
-
-    This outputs a table with the `Index` and `Name` of available devices.
-
-2.  **Transcribe using that device:**
-    ```bash
-    uvx livesrt transcribe --device <device_index>
-    ```
-
-### Simulating with an Audio File (Replay)
-
-For debugging or testing without a microphone, you can stream an audio file as
-if it were live input. _Note: This requires `ffmpeg` to be installed on your
-system._
+This runs the translation model on your machine. It requires no API key for
+translation but needs a decent CPU/GPU. It will download the model automatically
+on first run.
 
 ```bash
-uvx livesrt transcribe --replay-file /path/to/audio.wav
+# Transcribe (using AssemblyAI) and translate to French using a local model
+uvx livesrt translate "French"
 ```
 
-### Changing Regions (AssemblyAI only)
+### 3. Live Translation (Remote LLM)
 
-By default, `livesrt` connects to the EU AssemblyAI endpoint. To use the US
-endpoint:
+For faster performance without local hardware load, use a remote provider (e.g.,
+Groq).
 
-```bash
-uvx livesrt transcribe --provider assembly_ai --region us
-```
+1.  **Set your LLM API key:**
+    ```bash
+    uvx livesrt set-token groq
+    ```
+2.  **Run translation:**
+    ```bash
+    uvx livesrt translate "Spanish" --translation-engine remote-llm --model "groq/openai/gpt-oss-120b"
+    ```
 
 ## 📝 Command Reference
 
 All commands start with `livesrt`.
 
-### `livesrt set-token <provider> [--api-key <key>]`
+### `livesrt set-token <provider>`
 
-Sets the API token for a specific transcription provider.
+Sets the API token for a specific provider.
 
-- `<provider>`: The name of the provider. Choices: `assembly_ai`, `elevenlabs`,
-  `speechmatics`.
-- `--api-key <key>`, `-k <key>`: (Optional) Your secret API key. If not
-  provided, you will be securely prompted to enter it.
+- `<provider>` choices:
+    - ASR: `assembly_ai`, `elevenlabs`, `speechmatics`
+    - LLM: `groq`, `mistral`, `google`, `deepinfra`, `openrouter`
+- `--api-key <key>`, `-k <key>`: (Optional) Your secret API key. If omitted, you
+  are prompted securely.
 
 ### `livesrt list-microphones`
 
-Lists all available input microphone devices and their corresponding device IDs.
+Lists all available input microphone devices and their IDs.
 
 ### `livesrt transcribe [OPTIONS]`
 
-Starts live transcription.
+Starts live transcription without translation.
 
-- `--provider`, `-p`: The transcription provider to use (default:
-  `assembly_ai`).
-- `--device`, `-d <index>`: The index of the microphone device to use.
-- `--replay-file`, `-f <path>`: Use a file as the audio source instead of the
-  microphone.
-- `--language`, `-l <code >`: Language code (e.g., 'en', 'fr'). **Mandatory**
-  when using Speechmatics.
-- `--region`, `-r`: The API region (only applies to AssemblyAI). Choices: `eu`
-  (default), `us`.
+- `--provider`, `-p`: The transcription provider (default: `assembly_ai`).
+- `--device`, `-d <index>`: Microphone device index.
+- `--replay-file`, `-f <path>`: Use a file as audio source.
+- `--language`, `-l <code >`: Language code (Mandatory for Speechmatics).
+- `--region`, `-r`: API region (AssemblyAI only).
+
+### `livesrt translate <lang_to> [OPTIONS]`
+
+Starts live transcription and translates it to the target language.
+
+- **`<lang_to>`**: (Required) The target language (e.g., "French", "Japanese").
+- `--lang-from`: Source language (optional, LLM can usually infer it).
+- `--translation-engine`:
+    - `local-llm` (default): Runs a model locally (e.g., Ministral 8B).
+    - `remote-llm`: Uses an external API.
+- `--model`: Specific model string.
+    - For remote: `provider/model-name` (e.g., `mistral/mistral-large-latest`).
+- _Plus all options available in `transcribe` (provider, device, file, etc.)._
+
+## 💡 Usage Scenarios
+
+### Using a specific microphone
+
+1.  List devices: `uvx livesrt list-microphones`
+2.  Run: `uvx livesrt transcribe --device 2`
+
+### Debugging with a file
+
+Simulate a live stream using an audio file (requires `ffmpeg`):
+
+```bash
+uvx livesrt translate "German" --replay-file ./interview.wav
+```
+
+### Using ElevenLabs for ASR
+
+```bash
+uvx livesrt set-token elevenlabs
+uvx livesrt transcribe --provider elevenlabs
+```
 
 ## 🛠 Development
 
@@ -151,34 +152,18 @@ The `Makefile` contains helpers for common tasks:
 
 ## 🏗 Code Structure
 
-The project uses a modular architecture defined in `src/livesrt/transcribe/`:
-
-- **`src/livesrt/cli.py`**: The main entry point. Handles arguments,
-  configuration, and the UI (using `rich`). It instantiates the appropriate
-  Source and Transcripter based on user input.
-- **`src/livesrt/transcribe/base.py`**: Defines the abstract interfaces:
-    - `AudioSource`: Interface for yielding audio frames (from mic or file).
-    - `Transcripter`: Interface for processing audio and emitting events.
-    - `TranscriptReceiver`: Interface for handling transcription results (e.g.,
-      printing to console).
-- **`src/livesrt/transcribe/transcripters/`**:
-    - **`aai.py`**: AssemblyAI Streaming API implementation.
-    - **`elevenlabs.py`**: ElevenLabs Realtime API implementation.
-    - **`speechmatics.py`**: Speechmatics Realtime API implementation.
-- **`src/livesrt/transcribe/audio_sources/`**:
-    - **`mic.py`**: Captures live audio using `pyaudio`.
-    - **`replay_file.py`**: Streams audio from files using `ffmpeg`.
+- **`src/livesrt/cli.py`**: Entry point and UI.
+- **`src/livesrt/transcribe/`**: Audio capture and ASR logic.
+    - **`transcripters/`**: Implementations for AssemblyAI, ElevenLabs,
+      Speechmatics.
+    - **`audio_sources/`**: Mic (`pyaudio`) and File (`ffmpeg`) sources.
+- **`src/livesrt/translate/`**: Translation logic.
+    - **`local_llm.py`**: Wraps `llama_cpp` for local inference.
+    - **`remote_llm.py`**: Wraps `httpx` for OpenAI-compatible APIs.
+    - **`base.py`**: Handles conversation context and tool-use for accurate
+      translations.
 
 ## 📜 License
 
 This project is licensed under the WTFPL (Do What The Fuck You Want To Public
-License). For more details, see [http://www.wtfpl.net/](http://www.wtfpl.net/).
-
-## ⚠ Warranty Waiver
-
-This software is provided "as is", without warranty of any kind, express or
-implied, including but not limited to the warranties of merchantability, fitness
-for a particular purpose and noninfringement. In no event shall the authors or
-copyright holders be liable for any claim, damages or other liability, whether
-in an action of contract, tort or otherwise, arising from, out of or in
-connection with the software or the use or other dealings in the software.
+License).

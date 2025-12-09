@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from itertools import groupby
-from tenacity import retry, stop_after_attempt, retry_if_exception
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
+from tenacity import (
+    retry,
+    retry_if_exception,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
 
-from .base import TranslatedTurn, Translator
+from ..errors import LiveSrtError
+from .base import LlmTranslator, TranslatedTurn
 
 if TYPE_CHECKING:
     from ..transcribe.base import Turn
@@ -52,30 +57,40 @@ def is_missing_tool_call(exception: BaseException) -> bool:
 
 
 @retry(
-    retry=retry_if_exception(is_missing_tool_call),
-    stop=stop_after_attempt(5),
+    retry=(
+        retry_if_exception(is_missing_tool_call)
+        | retry_if_exception_type(httpx.TimeoutException)
+    ),
+    stop=stop_after_attempt(3),
 )
 async def call_completion(
     model: str,
     api_key: str,
     messages: list[dict],
     tools: list[dict],
-    tool_choice: dict | str = 'auto',
+    tool_choice: Literal["auto", "required", "none"] | dict = "auto",
 ) -> dict:
+    """
+    Calls the remote LLM API to get a completion.
+    """
     provider, _, model_id = model.partition("/")
 
-    base_url = {
-        "groq": "https://api.groq.com/openai/v1/chat/completions",
-        "mistral": "https://api.mistral.ai/v1/chat/completions",
-        "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        "deepinfra": "https://api.deepinfra.com/v1/openai/chat/completions",
-        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
-    }[provider]
+    try:
+        base_url = {
+            "groq": "https://api.groq.com/openai/v1/chat/completions",
+            "mistral": "https://api.mistral.ai/v1/chat/completions",
+            "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "deepinfra": "https://api.deepinfra.com/v1/openai/chat/completions",
+            "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+        }[provider]
+    except KeyError as e:
+        msg = f"Provider {provider!r} not found."
+        raise LiveSrtError(msg) from e
 
     client: httpx.AsyncClient
     async with httpx.AsyncClient(
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=600,
+        timeout=5,
     ) as client:
         req_body = dict(
             model=model_id,
@@ -109,192 +124,26 @@ async def call_completion(
 
 
 @dataclass(kw_only=True)
-class RemoteLLM(Translator):
-    """A translator that uses a local LLM."""
+class RemoteLLM(LlmTranslator):
+    """A translator that uses a remote LLM."""
 
-    model: str = "groq/openai/gpt-oss-120b"
+    model: str = "openrouter/mistralai/ministral-8b-2512"
     api_key: str
-    lang_to: str
-    lang_from: str = ""
-    known_turns: dict[int, TurnEntry] = field(default_factory=dict, init=False)
 
-    @classmethod
-    async def create_translator(
-        cls, lang_to: str, lang_from: str = "", **extra: Any
-    ) -> Translator:
-        """Create a new translator."""
-        return RemoteLLM(
-            lang_to=lang_to,
-            lang_from=lang_from,
-            **extra,
-        )
+    async def completion(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_choice: Literal["auto", "required", "none"] | dict = "auto",
+    ) -> dict:
+        """
+        Calling a remote LLM through their Completion endpoint
+        """
 
-    async def _next_turn(self, turns: list[Turn]) -> bool:
-        full_turns = [t for t in turns if t.words]
-        turn_id = 0
-
-        if not full_turns:
-            return False
-
-        system = (
-            "You are a translator. The user provides the output of an ASR "
-            "service. Your job is to interpret who said what (keep in mind "
-            "that the ASR makes mistakes) and report properly formatted and "
-            "constructed sentences using the available tool. Call the tool "
-            f"once or several times at each turn. The target language is: "
-            f"{self.lang_to}"
-        )
-
-        conversation = [
-            dict(
-                role="system",
-                content=system,
-            )
-        ]
-
-        missing_turns = False
-        translated_turn = None
-
-        for turn in full_turns:
-            sentences = []
-
-            for speaker, words in groupby(turn.words, lambda w: w.speaker):
-                sentences.append(
-                    dict(
-                        speaker=(speaker or "Someone"),
-                        asr_words=[w.text for w in words],
-                    )
-                )
-
-            conversation.append(
-                {
-                    "role": "user",
-                    "content": json.dumps(sentences, ensure_ascii=False),
-                }
-            )
-
-            entry = self.known_turns.get(turn.id)
-
-            if entry and entry.turn.words == turn.words:
-                turn_id = entry.turn.id + 1
-                conversation.append(entry.completion)
-
-                if "tool_calls" in entry.completion:
-                    # 1. Add the "tool" outputs
-                    for tool_call in (entry.completion["tool_calls"] or []):
-                        conversation.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "content": "Translation recorded"
-                        })
-
-                    # 2. FIX: Add dummy assistant message to satisfy Mistral protocol
-                    # This ensures the sequence is User -> Assistant -> Tool -> Assistant -> User
-                    conversation.append({
-                        "role": "assistant",
-                        "content": " "
-                    })
-            else:
-                missing_turns = True
-                translated_turn = turn
-                break
-
-        if not missing_turns:
-            return False
-
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "translate",
-                    "description": (
-                        "⚠️ CALL THIS FUNCTION TO SUBMIT YOUR ANSWER ⚠️\n\n"
-                        "You receive messy ASR transcription with errors, "
-                        "overlaps, and incomplete words. DO NOT ask for help "
-                        "or tools. YOU must:\n1. Fix ASR errors and typos\n2. "
-                        "Separate overlapping speech\n3. Remove stutters and "
-                        "filler words\n4. Create grammatically correct "
-                        "sentences\n5. Translate to target language\n6. CALL "
-                        "THIS FUNCTION with the result\n\nThe function "
-                        "parameters are where you write your cleaned, "
-                        "translated output."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "speaker": {
-                                "type": "string",
-                                "description": "Speaker name/ID from the input",
-                            },
-                            "text": {
-                                "type": "string",
-                                "description": (
-                                    "⚠️ PUT YOUR CLEANED & TRANSLATED TEXT "
-                                    "HERE ⚠️ - This is your final answer: "
-                                    "properly formatted, error-free, "
-                                    f"translated into {self.lang_to} sentences"
-                                ),
-                            },
-                        },
-                        "required": ["speaker", "text"],
-                    },
-                },
-            }
-        ]
-
-        completion = await call_completion(
+        return await call_completion(
             model=self.model,
             api_key=self.api_key,
-            messages=conversation,
+            messages=messages,
             tools=tools,
+            tool_choice=tool_choice,
         )
-
-        # panel = Panel(JSON.from_data(completion), title="Completion")
-        # console.print(panel)
-
-        translated = []
-
-        if not translated_turn:
-            return False
-
-        assert isinstance(completion, dict)  # noqa: S101
-
-        match completion["choices"][0]:
-            case {"message": {"role": "assistant", "tool_calls": tool_calls}}:
-                for call in tool_calls or []:
-                    match call:
-                        case {
-                            "function": {"name": "translate", "arguments": arguments}
-                        }:
-                            parsed = json.loads(arguments)
-                            translated.append(
-                                TranslatedTurn(
-                                    id=turn_id,
-                                    original_id=translated_turn.id,
-                                    speaker=parsed["speaker"],
-                                    text=parsed["text"],
-                                )
-                            )
-                            turn_id += 1
-
-        entry = TurnEntry(
-            turn=translated_turn,
-            translated=translated,
-            completion=cast("dict", completion["choices"][0]["message"]),
-        )
-        self.known_turns[translated_turn.id] = entry
-
-        return missing_turns
-
-    async def translate(self, turns: list[Turn]) -> list[TranslatedTurn]:
-        """Translate a list of turns."""
-
-        try:
-            while await self._next_turn(turns):
-                pass
-
-            return [
-                tt for entry in self.known_turns.values() for tt in entry.translated
-            ]
-        except Exception:
-            logger.exception("Translation failed")
