@@ -50,7 +50,11 @@ async def test_translate_returns_id():
                                 "function": {
                                     "name": "translate",
                                     "arguments": json.dumps(
-                                        {"speaker": "me", "text": "Bonjour"}
+                                        {
+                                            "lines": [
+                                                {"speaker": "me", "text": "Bonjour"}
+                                            ]
+                                        }
                                     ),
                                 },
                             }
@@ -72,7 +76,8 @@ async def test_translate_returns_id():
 
     # Check that tool output recorded the ID
     # The conversation history logic uses entry.tool_outputs
-    assert entry.tool_outputs == ["0"]
+    # With the new schema, it returns the count of lines ("1")
+    assert entry.tool_outputs == ["1"]
 
     # Verify conversation build includes the ID
     _, _, conversation = translator._build_conversation()
@@ -82,7 +87,7 @@ async def test_translate_returns_id():
         for m in conversation
         if m.get("role") == "tool" and m.get("tool_call_id") == "call_1"
     )
-    assert tool_msg["content"] == "0"
+    assert tool_msg["content"] == "1"
 
 
 @pytest.mark.asyncio
@@ -110,7 +115,11 @@ async def test_delete_turn():
                                 "function": {
                                     "name": "translate",
                                     "arguments": json.dumps(
-                                        {"speaker": "me", "text": "Bonjour"}
+                                        {
+                                            "lines": [
+                                                {"speaker": "me", "text": "Bonjour"}
+                                            ]
+                                        }
                                     ),
                                 },
                             }
@@ -154,7 +163,14 @@ async def test_delete_turn():
                                 "function": {
                                     "name": "translate",
                                     "arguments": json.dumps(
-                                        {"speaker": "me", "text": "Bonjour le monde"}
+                                        {
+                                            "lines": [
+                                                {
+                                                    "speaker": "me",
+                                                    "text": "Bonjour le monde",
+                                                }
+                                            ]
+                                        }
                                     ),
                                 },
                             },
@@ -181,4 +197,6 @@ async def test_delete_turn():
     assert visible_translated[0].id == 2
 
     # Check tool outputs for turn 2
-    assert translator.turns[2].tool_outputs == ["Deleted", "2"]
+    # "Deleted" for delete_turn
+    # "1" for translate (count of lines)
+    assert translator.turns[2].tool_outputs == ["Deleted", "1"]

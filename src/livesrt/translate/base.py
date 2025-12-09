@@ -150,12 +150,21 @@ class LlmTranslator(Translator, abc.ABC):
 
     def _build_system_prompt(self):
         return (
-            "You are a translator. The user provides the output of an ASR "
-            "service. Your job is to interpret who said what (keep in mind "
-            "that the ASR makes mistakes) and report properly formatted and "
-            "constructed sentences using the available tool. Call the tool "
-            f"once or several times at each turn. The target language is: "
-            f"{self.lang_to}"
+            f"You are a professional interpreter translating to {self.lang_to}. "
+            "You will receive live ASR transcripts that may contain errors, "
+            "wrong speaker assignments, and fragmentation.\n\n"
+            "Your task is to:\n"
+            "1. Reconstruct the dialogue line by line.\n"
+            "2. Assign the correct speaker (correcting the ASR if needed).\n"
+            "3. Translate the dialogue into natural, grammatically correct "
+            f"{self.lang_to}.\n"
+            "4. Include onomatopoeia and sounds (e.g. laughter, applause) in "
+            "the translation, formatted in parentheses like (laughs).\n"
+            "5. Emit EXACTLY ONE tool call containing the list of dialogue "
+            "lines.\n\n"
+            "Use the `status` and `comment` fields to express uncertainty or "
+            "impossibility, ensuring the `text` field remains clean and "
+            "reader-friendly."
         )
 
     def _build_user_message(self, turn: Turn) -> str:
@@ -246,45 +255,58 @@ class LlmTranslator(Translator, abc.ABC):
                 "function": {
                     "name": "translate",
                     "description": (
-                        "⚠ CALL THIS FUNCTION TO SUBMIT YOUR ANSWER ⚠\n\n"
-                        "You receive messy ASR transcription with errors, "
-                        "overlaps, and incomplete words. DO NOT ask for help "
-                        "or tools. YOU must:\n1. Fix ASR errors and typos\n2. "
-                        "Separate overlapping speech\n3. Remove stutters and "
-                        "filler words\n4. Split long inputs into multiple "
-                        "sentences\n5. Create grammatically correct "
-                        "sentences\n6. Translate to target language\n7. CALL "
-                        "THIS FUNCTION with the result\n\nThe function "
-                        "parameters are where you write your cleaned, "
-                        "translated output. The function returns the ID of the "
-                        "emitted turn."
+                        "Emit the translated dialogue. Break down the input "
+                        "into individual dialogue lines."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "speaker": {
-                                "type": "string",
-                                "description": "Speaker name/ID from the input",
-                            },
-                            "text": {
-                                "type": "string",
-                                "description": (
-                                    "⚠ PUT YOUR CLEANED & TRANSLATED TEXT "
-                                    "HERE ⚠ - This is your final answer: "
-                                    "properly formatted, error-free, "
-                                    f"translated into {self.lang_to} sentences"
-                                ),
-                            },
-                            "comment": {
-                                "type": "string",
-                                "description": (
-                                    "Translation comments. Leave blank unless "
-                                    "there is something really important to "
-                                    "say."
-                                ),
-                            },
+                            "lines": {
+                                "type": "array",
+                                "description": "List of translated dialogue lines.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "speaker": {
+                                            "type": "string",
+                                            "description": "Speaker name (corrected).",
+                                        },
+                                        "text": {
+                                            "type": "string",
+                                            "description": (
+                                                "The translated text. Must be "
+                                                "clean, grammatical, and "
+                                                "readable. Include sounds in "
+                                                "parentheses."
+                                            ),
+                                        },
+                                        "status": {
+                                            "type": "string",
+                                            "enum": [
+                                                "success",
+                                                "uncertain",
+                                                "impossible",
+                                            ],
+                                            "description": (
+                                                "The confidence status of the "
+                                                "translation. Use 'impossible' "
+                                                "for gibberish."
+                                            ),
+                                        },
+                                        "comment": {
+                                            "type": "string",
+                                            "description": (
+                                                "Any notes about the "
+                                                "translation, uncertainty, or "
+                                                "issues."
+                                            ),
+                                        },
+                                    },
+                                    "required": ["speaker", "text", "status"],
+                                },
+                            }
                         },
-                        "required": ["speaker", "text"],
+                        "required": ["lines"],
                     },
                 },
             },
@@ -308,30 +330,6 @@ class LlmTranslator(Translator, abc.ABC):
                             },
                         },
                         "required": ["turn_id"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "pass",
-                    "description": (
-                        "The input might be gibberish, incomplete our too "
-                        "out-of-context to be translated. In this case, call "
-                        "that function."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": (
-                                    "A potential question you might have "
-                                    "regarding the input. Only fill if "
-                                    "necessary."
-                                ),
-                            }
-                        },
                     },
                 },
             },
@@ -362,31 +360,43 @@ class LlmTranslator(Translator, abc.ABC):
                             }
                         }:
                             parsed = json.loads(arguments)
-                            out.append(
-                                TranslatedTurn(
-                                    id=next_id,
-                                    original_id=turn.id,
-                                    speaker=parsed["speaker"],
-                                    text=parsed["text"],
+                            lines = parsed.get("lines", [])
+
+                            for line in lines:
+                                status = line.get("status", "success")
+                                text = line.get("text", "")
+                                speaker = line.get("speaker", "")
+                                comment = line.get("comment", "")
+
+                                hidden = status == "impossible"
+
+                                out.append(
+                                    TranslatedTurn(
+                                        id=next_id,
+                                        original_id=turn.id,
+                                        speaker=speaker,
+                                        text=text,
+                                        hidden=hidden,
+                                    )
                                 )
-                            )
-                            debug_entries.append(
-                                {
-                                    "summary": (
-                                        f"Translate {parsed['speaker']}: "
-                                        f"{parsed['text'][:20]}..."
-                                    ),
-                                    "details": {
-                                        "input": input_data,
-                                        "output": {
-                                            "function": "translate",
-                                            "parameters": parsed,
+                                debug_entries.append(
+                                    {
+                                        "summary": (
+                                            f"[{status.upper()}] {speaker}: "
+                                            f"{text[:20]}..."
+                                        ),
+                                        "details": {
+                                            "input": input_data,
+                                            "output": {
+                                                "function": "translate",
+                                                "parameters": line,
+                                            },
+                                            "comment": comment,
                                         },
-                                    },
-                                }
-                            )
-                            tool_outputs.append(str(next_id))
-                            next_id += 1
+                                    }
+                                )
+                                next_id += 1
+                            tool_outputs.append(str(len(lines)))
 
                         case {
                             "function": {
@@ -418,37 +428,6 @@ class LlmTranslator(Translator, abc.ABC):
                                 }
                             )
                             tool_outputs.append("Deleted")
-                            next_id += 1
-
-                        case {
-                            "function": {
-                                "name": "pass",
-                                "arguments": arguments,
-                            }
-                        }:
-                            parsed = json.loads(arguments)
-                            out.append(
-                                TranslatedTurn(
-                                    id=next_id,
-                                    original_id=turn.id,
-                                    speaker="",
-                                    text="",
-                                    hidden=True,
-                                )
-                            )
-                            debug_entries.append(
-                                {
-                                    "summary": (f"Pass: {parsed.get('question', '')}"),
-                                    "details": {
-                                        "input": input_data,
-                                        "output": {
-                                            "function": "pass",
-                                            "parameters": parsed,
-                                        },
-                                    },
-                                }
-                            )
-                            tool_outputs.append("Passed")
                             next_id += 1
 
                         case _:
