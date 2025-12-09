@@ -40,6 +40,7 @@ class TranslatedWidget(Static):
 
     def __init__(self, turn: TranslatedTurn, **kwargs):
         self.turn_id = turn.id
+        self.original_id = turn.original_id
         self.speaker = turn.speaker
         self.text_content = turn.text
         super().__init__(self._get_renderable(), **kwargs)
@@ -53,10 +54,11 @@ class TranslatedWidget(Static):
             f"[white]{self.text_content}[/white]"
         )
 
-    def update_content(self, speaker: str, text: str):
+    def update_content(self, speaker: str, text: str, original_id: int):
         """Update the content of the translated turn."""
         self.speaker = speaker
         self.text_content = text
+        self.original_id = original_id
         self.update(self._get_renderable())
 
 
@@ -99,7 +101,16 @@ class LiveSrtApp(App):
 
     BINDINGS: ClassVar[list[Binding]] = [  # type: ignore
         Binding("q", "quit", "Quit"),
+        Binding("s", "toggle_autoscroll", "Toggle Auto-Scroll"),
     ]
+
+    auto_scroll: bool = True
+
+    def action_toggle_autoscroll(self) -> None:
+        """Toggle auto-scroll."""
+        self.auto_scroll = not self.auto_scroll
+        status = "enabled" if self.auto_scroll else "disabled"
+        self.notify(f"Auto-scroll {status}")
 
     def __init__(
         self,
@@ -159,9 +170,9 @@ class LiveSrtApp(App):
             widget = TurnWidget(turn)
             self.source_widgets[turn.id] = widget
             await container.mount(widget)
-            if self.auto_scroll:
-                widget.scroll_visible()
 
+        if self.auto_scroll:
+            container.scroll_end()
         if self.translator:
             await self.translator.update_turns(list(self._source_turns.values()))
 
@@ -169,15 +180,46 @@ class LiveSrtApp(App):
         """Receive translated turns and update UI."""
         container = self.query_one("#content", VerticalScroll)
 
+        # Remove widgets that are not in the new list
+        incoming_ids = {t.id for t in turns}
+        to_remove = [
+            tid for tid in self.translated_widgets if tid not in incoming_ids
+        ]
+
+        for tid in to_remove:
+            widget = self.translated_widgets.pop(tid)
+            await widget.remove()
+
+        # We keep track of the last widget for a given source turn.
+        # This will be the source turn widget itself, or the last translated
+        # turn widget for that source turn.
+        anchors: dict[int, Static] = dict(self.source_widgets)
+
         for turn in turns:
             if turn.id in self.translated_widgets:
-                self.translated_widgets[turn.id].update_content(turn.speaker, turn.text)
+                widget = self.translated_widgets[turn.id]
+                widget.update_content(turn.speaker, turn.text, turn.original_id)
             else:
                 widget = TranslatedWidget(turn)
                 self.translated_widgets[turn.id] = widget
+
+            # Find the anchor widget to place this translation after
+            anchor = anchors.get(turn.original_id)
+
+            if anchor:
+                if widget.parent is None:
+                    await container.mount(widget, after=anchor)
+                else:
+                    container.move_child(widget, after=anchor)
+
+                # Update the anchor for the next translation of this source turn
+                anchors[turn.original_id] = widget
+
+            elif widget.parent is None:
                 await container.mount(widget)
-                if self.auto_scroll:
-                    widget.scroll_visible()
+
+        if self.auto_scroll:
+            container.scroll_end()
 
     async def stop(self) -> None:
         """Called by transcripter/translator if they were to call it."""
