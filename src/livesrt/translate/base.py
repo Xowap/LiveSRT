@@ -34,6 +34,8 @@ class TranslatedTurn:
     text: str
     start: timedelta | None = None
     end: timedelta | None = None
+    debug: dict | None = None
+    hidden: bool = False
 
 
 class TranslationReceiver(abc.ABC):
@@ -364,6 +366,13 @@ class LlmTranslator(Translator, abc.ABC):
                                     original_id=turn.id,
                                     speaker=parsed["speaker"],
                                     text=parsed["text"],
+                                    debug={
+                                        "summary": (
+                                            f"Translate {parsed['speaker']}: "
+                                            f"{parsed['text'][:20]}..."
+                                        ),
+                                        "details": call,
+                                    },
                                 )
                             )
                             tool_outputs.append(str(next_id))
@@ -377,7 +386,46 @@ class LlmTranslator(Translator, abc.ABC):
                         }:
                             parsed = json.loads(arguments)
                             deleted_ids.append(parsed["turn_id"])
+                            out.append(
+                                TranslatedTurn(
+                                    id=next_id,
+                                    original_id=turn.id,
+                                    speaker="",
+                                    text="",
+                                    debug={
+                                        "summary": f"Delete {parsed['turn_id']}",
+                                        "details": call,
+                                    },
+                                    hidden=True,
+                                )
+                            )
                             tool_outputs.append("Deleted")
+                            next_id += 1
+
+                        case {
+                            "function": {
+                                "name": "pass",
+                                "arguments": arguments,
+                            }
+                        }:
+                            parsed = json.loads(arguments)
+                            out.append(
+                                TranslatedTurn(
+                                    id=next_id,
+                                    original_id=turn.id,
+                                    speaker="",
+                                    text="",
+                                    debug={
+                                        "summary": (
+                                            f"Pass: {parsed.get('question', '')}"
+                                        ),
+                                        "details": call,
+                                    },
+                                    hidden=True,
+                                )
+                            )
+                            tool_outputs.append("Passed")
+                            next_id += 1
 
                         case _:
                             tool_outputs.append("Recorded")

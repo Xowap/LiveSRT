@@ -173,9 +173,12 @@ async def test_delete_turn():
     assert len(translator.turns[1].translated) == 0
 
     # Turn 2 should have the new translation (ID 1)
-    assert len(translator.turns[2].translated) == 1
-    assert translator.turns[2].translated[0].text == "Bonjour le monde"
-    assert translator.turns[2].translated[0].id == 1
+    visible_translated = [t for t in translator.turns[2].translated if not t.hidden]
+    assert len(visible_translated) == 1
+    assert visible_translated[0].text == "Bonjour le monde"
+
+    # The ID of the visible turn will now be 2, because the delete_turn consumed ID 1
+    assert visible_translated[0].id == 2
 
     # Check tool outputs for turn 2
-    assert translator.turns[2].tool_outputs == ["Deleted", "1"]
+    assert translator.turns[2].tool_outputs == ["Deleted", "2"]
