@@ -103,8 +103,20 @@ class LlmTranslator(Translator, abc.ABC):
     lang_from: str = ""
     has_new_turns: asyncio.Event = field(default_factory=asyncio.Event)
     turns: dict[int, LlmTranslationEntry] = field(default_factory=dict)
+    _queued_turns: list[Turn] = field(default_factory=dict)
 
     async def update_turns(self, turns: list[Turn]) -> None:
+        """
+        We store the next batch of turns to update and mark the new turns flag.
+        This way the processing loop can pick the latest version and
+        intermediate versions of turns that appeared during the processing of
+        the translation will get discarded.
+        """
+
+        self._queued_turns = turns
+        self.has_new_turns.set()
+
+    def _update_turns(self) -> None:
         """
         We are getting the new turns list, and then we make the diff with the
         existing list. The idea is that we'll detect the earliest change and
@@ -112,14 +124,11 @@ class LlmTranslator(Translator, abc.ABC):
         that given a past translation might affect future translations, we
         want to start back form there. In practice the translation system only
         changes the last turn anyway.
-
-        When a change is found, we flag the `has_new_turns` event so that the
-        processing loop can move forward.
         """
 
         min_diff = float("inf")
 
-        for turn in turns:
+        for turn in self._queued_turns:
             if not turn.words:
                 continue
 
@@ -136,7 +145,6 @@ class LlmTranslator(Translator, abc.ABC):
             if entry.turn.id >= min_diff:
                 entry.completion = None
                 entry.translated = None
-                self.has_new_turns.set()
 
     def _build_system_prompt(self):
         return (
@@ -382,6 +390,8 @@ class LlmTranslator(Translator, abc.ABC):
             self.has_new_turns.clear()
 
             try:
+                self._update_turns()
+
                 while await self._translate_next_turn():
                     await receiver.receive_translations(
                         sorted(
