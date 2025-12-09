@@ -1,15 +1,23 @@
 # LiveSRT: Live Speech-to-Text & Translation
 
-LiveSRT is a modular command-line interface (CLI) tool for real-time
-speech-to-text transcription and translation. It captures audio from your
-microphone (or a file), streams it to state-of-the-art AI transcription
-providers, and uses Large Language Models (LLMs) to correct and translate the
-output on the fly.
+LiveSRT is a modular tool for real-time speech-to-text transcription and
+translation. It captures audio from your microphone (or a file), streams it to
+state-of-the-art AI transcription providers, and uses Large Language Models
+(LLMs) to correct and translate the output on the fly, displaying the results in
+a rich Terminal User Interface (TUI).
+
+## 📺 Demo
+
+Here's a quick demonstration of LiveSRT in action:
+
+[![asciicast](https://asciinema.org/a/Y52mPjSCMlHsl6dCVzR60Gy2p.svg)](https://asciinema.org/a/Y52mPjSCMlHsl6dCVzR60Gy2p)
 
 ## ✨ Features
 
 - **Live Transcription:** Real-time speech-to-text using top-tier providers.
 - **Live Translation:** Translate speech instantly using LLMs (Local or Remote).
+- **Rich TUI:** A dedicated terminal interface to view live transcripts and
+  translations side-by-side.
 - **Intelligent Post-processing:** Uses LLMs to clean up stutters, fix ASR
   errors, and separate speakers.
 - **Audio Sources:** Support for microphones and audio file replay (via ffmpeg).
@@ -72,6 +80,14 @@ Groq).
 ## 📝 Command Reference
 
 All commands start with `livesrt`.
+
+### Global Options
+
+These options apply to all commands.
+
+- `--namespace`, `-n <name>`: The namespace to use for storing keys and
+  configuration (default: `default`). Useful for managing multiple environments
+  or profiles.
 
 ### `livesrt set-token <provider>`
 
@@ -152,7 +168,8 @@ The `Makefile` contains helpers for common tasks:
 
 ## 🏗 Code Structure
 
-- **`src/livesrt/cli.py`**: Entry point and UI.
+- **`src/livesrt/cli.py`**: Entry point and CLI logic.
+- **`src/livesrt/tui.py`**: The Textual-based UI implementation.
 - **`src/livesrt/transcribe/`**: Audio capture and ASR logic.
     - **`transcripters/`**: Implementations for AssemblyAI, ElevenLabs,
       Speechmatics.

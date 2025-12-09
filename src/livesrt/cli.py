@@ -2,9 +2,7 @@
 The logic specific to the CLI interface
 """
 
-import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
@@ -24,8 +22,6 @@ from livesrt.transcribe.audio_sources.replay_file import FileSourceFactory
 from livesrt.transcribe.base import (
     AudioSource,
     Transcripter,
-    TranscriptReceiver,
-    Turn,
 )
 from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
 from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
@@ -33,10 +29,9 @@ from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscript
 from livesrt.translate import (
     LocalLLM,
     RemoteLLM,
-    TranslatedTurn,
-    TranslationReceiver,
     Translator,
 )
+from livesrt.tui import LiveSrtApp
 
 
 class ProviderType(Enum):
@@ -300,147 +295,6 @@ def display_http_error(error: httpx.HTTPError) -> None:
     console.print()
 
 
-@dataclass
-class UnifiedReceiver(TranscriptReceiver, TranslationReceiver):
-    """
-    Unified implementation that receives both transcripts and translations.
-    If a translator is provided, it feeds transcripts to it and displays the results.
-    """
-
-    translator: Translator | None = None
-    _source_turns: dict[int, Turn] = field(default_factory=dict)
-    _printed_source: dict[int, str] = field(default_factory=dict)
-    _printed_translation: dict[int, str] = field(default_factory=dict)
-    _start_time: datetime | None = field(init=False, default=None)
-    _translator_task: asyncio.Task | None = field(init=False, default=None)
-
-    async def start(self) -> None:
-        """
-        Prints meta information about the session being started and initializes
-        the translator if present.
-        """
-        self._start_time = datetime.now().astimezone()
-
-        # Create session info table
-        info_table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
-        info_table.add_column(style="dim")
-        info_table.add_column()
-        info_table.add_row(
-            "Started at:", f"[cyan]{self._start_time.strftime('%H:%M:%S')}[/cyan]"
-        )
-
-        status_msg = "Listening..."
-        title = "TRANSCRIPTION STARTED"
-        color = "bold green"
-
-        if self.translator:
-            status_msg = "Listening & Translating..."
-            title = "LIVE TRANSLATION STARTED"
-            color = "bold yellow"
-
-        info_table.add_row("", f"[dim]{status_msg} (Press CTRL+C to stop)[/dim]")
-
-        console.print()
-        console.print(
-            Panel(
-                info_table,
-                title=f"[{color}]{title}",
-                title_align="center",
-                border_style=color,
-                padding=(0, 1),
-            )
-        )
-        console.print()
-
-        if self.translator:
-            await self.translator.init()
-            # The process method runs forever, so we must spawn it
-            self._translator_task = asyncio.create_task(self.translator.process(self))
-
-    async def receive_turn(self, turn: Turn) -> None:
-        """
-        Receives updates about every transcription turn.
-        Prints updates and forwards to the translator.
-        """
-        if not turn.text.strip():
-            return
-
-        self._source_turns[turn.id] = turn
-
-        # Check if we should print this ASR turn (new or changed)
-        last_text = self._printed_source.get(turn.id)
-        if turn.text != last_text:
-            # Visual distinction: Dimmed, with @ ID
-            console.print(
-                f"@ [bold cyan]{turn.id}[/bold cyan] [dim]{turn.text}[/dim]",
-                # If we are strictly just transcribing (no translation), make
-                # it brighter
-                style="dim" if self.translator else "",
-            )
-            self._printed_source[turn.id] = turn.text
-
-        # Feed the translator with the updated state of turns
-        if self.translator:
-            await self.translator.update_turns(list(self._source_turns.values()))
-
-    async def receive_translations(self, turns: list[TranslatedTurn]) -> None:
-        """
-        Receives updates from the translator.
-        """
-        for turn in turns:
-            last_text = self._printed_translation.get(turn.id)
-
-            if turn.text != last_text:
-                # Visual distinction: Bold/Bright with # ID
-                console.print(
-                    f"> [bold yellow]#{turn.id}[/bold yellow] "
-                    f"[bold green]{turn.speaker}[/bold green]: "
-                    f"[white]{turn.text}[/white]"
-                )
-                self._printed_translation[turn.id] = turn.text
-
-    async def stop(self) -> None:
-        """
-        When the stream ends, clean up tasks and print recap.
-        """
-        if self._translator_task:
-            self._translator_task.cancel()
-            try:
-                await self._translator_task
-            except asyncio.CancelledError:
-                pass
-
-        if not self._start_time:
-            return
-
-        duration = datetime.now().astimezone() - self._start_time
-
-        summary_table = Table(
-            show_header=False,
-            box=None,
-            padding=(0, 1),
-            pad_edge=False,
-        )
-        summary_table.add_column(style="dim")
-        summary_table.add_column(style="cyan")
-
-        total_source = len([t for t in self._source_turns.values() if t.final])
-        summary_table.add_row("Total turns:", str(total_source))
-        summary_table.add_row("Session duration:", str(duration).split(".")[0])
-
-        console.print()
-        console.print(
-            Panel(
-                summary_table,
-                title="[bold yellow]SESSION ENDED",
-                title_align="center",
-                border_style="bold yellow",
-                padding=(0, 1),
-            )
-        )
-        console.print()
-
-
 @cli.command()
 @click.option(
     *["--device", "-d"],
@@ -492,19 +346,9 @@ async def transcribe(
     source = await _make_audio_source(device, replay_file)
     transcripter = await _make_transcripter(obj, language, provider, region)
 
-    # For pure transcription, we just pass no translator
-    receiver = UnifiedReceiver(translator=None)
-
-    try:
-        if transcripter:
-            await transcripter.process(source, receiver)
-    except httpx.HTTPError as e:
-        display_http_error(e)
-        msg = "HTTP request failed"
-        raise click.ClickException(msg) from e
-    except RuntimeError as e:
-        # Handle provider-specific runtime errors
-        raise click.ClickException(str(e)) from e
+    if transcripter:
+        app = LiveSrtApp(source=source, transcripter=transcripter)
+        await app.run_async()
 
 
 @cli.command()
@@ -587,17 +431,11 @@ async def translate(
         translation_engine, lang_to, lang_from, model, obj.store
     )
 
-    receiver = UnifiedReceiver(translator=translator)
-
-    try:
-        if transcripter:
-            await transcripter.process(source, receiver)
-    except httpx.HTTPError as e:
-        display_http_error(e)
-        msg = "HTTP request failed"
-        raise click.ClickException(msg) from e
-    except RuntimeError as e:
-        raise click.ClickException(str(e)) from e
+    if transcripter:
+        app = LiveSrtApp(
+            source=source, transcripter=transcripter, translator=translator
+        )
+        await app.run_async()
 
 
 async def _make_translator(
