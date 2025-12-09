@@ -90,6 +90,7 @@ class LlmTranslationEntry:
     turn: Turn
     completion: dict | None = None
     translated: list[TranslatedTurn] | None = None
+    tool_outputs: list[str] | None = None
 
 
 @dataclass
@@ -103,7 +104,7 @@ class LlmTranslator(Translator, abc.ABC):
     lang_from: str = ""
     has_new_turns: asyncio.Event = field(default_factory=asyncio.Event)
     turns: dict[int, LlmTranslationEntry] = field(default_factory=dict)
-    _queued_turns: list[Turn] = field(default_factory=dict)
+    _queued_turns: list[Turn] = field(default_factory=list)
 
     async def update_turns(self, turns: list[Turn]) -> None:
         """
@@ -206,12 +207,14 @@ class LlmTranslator(Translator, abc.ABC):
                 turn_id += len(entry.translated or [])
                 conversation.append(entry.completion)
 
+                tool_outputs = iter(entry.tool_outputs or [])
+
                 for tool_call in entry.completion.get("tool_calls") or []:
                     conversation.append(
                         dict(
                             role="tool",
                             tool_call_id=tool_call["id"],
-                            content="Recorded",
+                            content=next(tool_outputs, "Recorded"),
                         )
                     )
 
@@ -247,11 +250,13 @@ class LlmTranslator(Translator, abc.ABC):
                         "overlaps, and incomplete words. DO NOT ask for help "
                         "or tools. YOU must:\n1. Fix ASR errors and typos\n2. "
                         "Separate overlapping speech\n3. Remove stutters and "
-                        "filler words\n4. Create grammatically correct "
-                        "sentences\n5. Translate to target language\n6. CALL "
+                        "filler words\n4. Split long inputs into multiple "
+                        "sentences\n5. Create grammatically correct "
+                        "sentences\n6. Translate to target language\n7. CALL "
                         "THIS FUNCTION with the result\n\nThe function "
                         "parameters are where you write your cleaned, "
-                        "translated output."
+                        "translated output. The function returns the ID of the "
+                        "emitted turn."
                     ),
                     "parameters": {
                         "type": "object",
@@ -279,6 +284,29 @@ class LlmTranslator(Translator, abc.ABC):
                             },
                         },
                         "required": ["speaker", "text"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_turn",
+                    "description": (
+                        "Call this function to delete a previously emitted "
+                        "turn. This is useful when the context changes and a "
+                        "previous translation is no longer valid (e.g. because "
+                        "a sentence was cut in half). You should then emit a "
+                        "new replacement turn."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "turn_id": {
+                                "type": "integer",
+                                "description": "The ID of the turn to delete.",
+                            },
+                        },
+                        "required": ["turn_id"],
                     },
                 },
             },
@@ -313,8 +341,10 @@ class LlmTranslator(Translator, abc.ABC):
         turn: Turn,
         next_id: int,
         completion: dict,
-    ) -> tuple[dict, list[TranslatedTurn]]:
+    ) -> tuple[dict, list[TranslatedTurn], list[int], list[str]]:
         out: list[TranslatedTurn] = []
+        deleted_ids: list[int] = []
+        tool_outputs: list[str] = []
 
         message: dict
         match message := completion["choices"][0]["message"]:
@@ -336,9 +366,23 @@ class LlmTranslator(Translator, abc.ABC):
                                     text=parsed["text"],
                                 )
                             )
+                            tool_outputs.append(str(next_id))
                             next_id += 1
 
-        return message, out
+                        case {
+                            "function": {
+                                "name": "delete_turn",
+                                "arguments": arguments,
+                            }
+                        }:
+                            parsed = json.loads(arguments)
+                            deleted_ids.append(parsed["turn_id"])
+                            tool_outputs.append("Deleted")
+
+                        case _:
+                            tool_outputs.append("Recorded")
+
+        return message, out, deleted_ids, tool_outputs
 
     async def _translate_next_turn(self) -> bool:
         to_translate, next_id, conversation = self._build_conversation()
@@ -360,11 +404,19 @@ class LlmTranslator(Translator, abc.ABC):
             tool_choice="required",
         )
 
-        response, turns = self._decode_completion(
+        response, turns, deleted_ids, tool_outputs = self._decode_completion(
             to_translate.turn, next_id, completion
         )
         to_translate.completion = response
         to_translate.translated = turns
+        to_translate.tool_outputs = tool_outputs
+
+        if deleted_ids:
+            for entry in self.turns.values():
+                if entry.translated:
+                    entry.translated = [
+                        t for t in entry.translated if t.id not in deleted_ids
+                    ]
 
         return True
 
