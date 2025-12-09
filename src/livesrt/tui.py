@@ -10,7 +10,6 @@ from rich.syntax import Syntax
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.logging import TextualHandler
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Log, Static
 
@@ -138,6 +137,23 @@ class TranslatedWidget(Static):
         self.text_content = text
         self.original_id = original_id
         self.update(self._get_renderable())
+
+
+class LogWidgetHandler(logging.Handler):
+    """A logging handler that writes to a Textual Log widget."""
+
+    def __init__(self, widget: Log):
+        super().__init__()
+        self.widget = widget
+        self.formatter = logging.Formatter("%(levelname)s: %(message)s")
+
+    def emit(self, record):
+        """Emit a record to the log widget."""
+        try:
+            msg = self.format(record)
+            self.widget.write(msg + "\n")
+        except Exception:
+            self.handleError(record)
 
 
 class AppReceiver(TranscriptReceiver, TranslationReceiver):
@@ -269,9 +285,11 @@ class LiveSrtApp(App):
     async def on_mount(self):
         """Handle app mount event."""
         # Configure logging
-        handler = TextualHandler()
+        log_panel = self.query_one("#log-panel", Log)
+        handler = LogWidgetHandler(log_panel)
+
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.WARNING)
+        root_logger.setLevel(logging.INFO)
         root_logger.addHandler(handler)
 
         # Ensure livesrt logger is set to DEBUG

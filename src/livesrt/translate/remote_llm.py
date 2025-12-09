@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -156,10 +157,14 @@ class RemoteLLM(LlmTranslator):
         Calling a remote LLM through their Completion endpoint
         """
 
-        return await call_completion(
+        start = time.perf_counter()
+        response = await call_completion(
             model=self.model,
             api_key=self.api_key,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
         )
+        duration = time.perf_counter() - start
+        logger.info("Remote LLM completion (%s) took %.2fs", self.model, duration)
+        return response
