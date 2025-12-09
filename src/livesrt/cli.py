@@ -343,7 +343,7 @@ async def transcribe(
 ):
     """Transcribes live the audio from the microphone"""
 
-    source = await _make_audio_source(device, replay_file)
+    source = await _make_audio_source(device, replay_file, provider)
     transcripter = await _make_transcripter(obj, language, provider, region)
 
     if transcripter:
@@ -425,7 +425,7 @@ async def translate(
     Transcribes live audio and translates it to the target language.
     """
 
-    source = await _make_audio_source(device, replay_file)
+    source = await _make_audio_source(device, replay_file, provider)
     transcripter = await _make_transcripter(obj, language, provider, region)
     translator = await _make_translator(
         translation_engine, lang_to, lang_from, model, obj.store
@@ -503,14 +503,20 @@ async def _make_transcripter(
     return transcripter
 
 
-async def _make_audio_source(device: int | None, replay_file: str) -> AudioSource:
+async def _make_audio_source(
+    device: int | None, replay_file: str, provider: str
+) -> AudioSource:
     # Initialize Audio Source
+    sample_rate: Literal[16_000, 48_000] = (
+        48_000 if provider == ProviderType.SPEECHMATICS.value else 16_000
+    )
+
     source: AudioSource
     if replay_file:
-        file_factory = FileSourceFactory(sample_rate=16_000, realtime=True)
+        file_factory = FileSourceFactory(sample_rate=sample_rate, realtime=True)
         source = file_factory.create_source(replay_file)
     else:
-        mic_factory = MicSourceFactory(sample_rate=16_000)
+        mic_factory = MicSourceFactory(sample_rate=sample_rate)
         if device is not None and not mic_factory.is_device_valid(device):
             msg = f"Device #{device} is not a valid device."
             raise click.BadParameter(msg, param_hint="--device")

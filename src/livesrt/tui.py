@@ -182,9 +182,7 @@ class LiveSrtApp(App):
 
         # Remove widgets that are not in the new list
         incoming_ids = {t.id for t in turns}
-        to_remove = [
-            tid for tid in self.translated_widgets if tid not in incoming_ids
-        ]
+        to_remove = [tid for tid in self.translated_widgets if tid not in incoming_ids]
 
         for tid in to_remove:
             widget = self.translated_widgets.pop(tid)
