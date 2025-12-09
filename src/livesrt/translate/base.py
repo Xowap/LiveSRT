@@ -34,7 +34,6 @@ class TranslatedTurn:
     text: str
     start: timedelta | None = None
     end: timedelta | None = None
-    debug: dict | None = None
     hidden: bool = False
 
 
@@ -347,6 +346,9 @@ class LlmTranslator(Translator, abc.ABC):
         out: list[TranslatedTurn] = []
         deleted_ids: list[int] = []
         tool_outputs: list[str] = []
+        debug_entries: list[dict] = []
+
+        input_data = json.loads(self._build_user_message(turn))
 
         message: dict
         match message := completion["choices"][0]["message"]:
@@ -366,14 +368,22 @@ class LlmTranslator(Translator, abc.ABC):
                                     original_id=turn.id,
                                     speaker=parsed["speaker"],
                                     text=parsed["text"],
-                                    debug={
-                                        "summary": (
-                                            f"Translate {parsed['speaker']}: "
-                                            f"{parsed['text'][:20]}..."
-                                        ),
-                                        "details": call,
-                                    },
                                 )
+                            )
+                            debug_entries.append(
+                                {
+                                    "summary": (
+                                        f"Translate {parsed['speaker']}: "
+                                        f"{parsed['text'][:20]}..."
+                                    ),
+                                    "details": {
+                                        "input": input_data,
+                                        "output": {
+                                            "function": "translate",
+                                            "parameters": parsed,
+                                        },
+                                    },
+                                }
                             )
                             tool_outputs.append(str(next_id))
                             next_id += 1
@@ -392,12 +402,20 @@ class LlmTranslator(Translator, abc.ABC):
                                     original_id=turn.id,
                                     speaker="",
                                     text="",
-                                    debug={
-                                        "summary": f"Delete {parsed['turn_id']}",
-                                        "details": call,
-                                    },
                                     hidden=True,
                                 )
+                            )
+                            debug_entries.append(
+                                {
+                                    "summary": f"Delete {parsed['turn_id']}",
+                                    "details": {
+                                        "input": input_data,
+                                        "output": {
+                                            "function": "delete_turn",
+                                            "parameters": parsed,
+                                        },
+                                    },
+                                }
                             )
                             tool_outputs.append("Deleted")
                             next_id += 1
@@ -415,14 +433,20 @@ class LlmTranslator(Translator, abc.ABC):
                                     original_id=turn.id,
                                     speaker="",
                                     text="",
-                                    debug={
-                                        "summary": (
-                                            f"Pass: {parsed.get('question', '')}"
-                                        ),
-                                        "details": call,
-                                    },
                                     hidden=True,
                                 )
+                            )
+                            debug_entries.append(
+                                {
+                                    "summary": (f"Pass: {parsed.get('question', '')}"),
+                                    "details": {
+                                        "input": input_data,
+                                        "output": {
+                                            "function": "pass",
+                                            "parameters": parsed,
+                                        },
+                                    },
+                                }
                             )
                             tool_outputs.append("Passed")
                             next_id += 1
@@ -430,6 +454,7 @@ class LlmTranslator(Translator, abc.ABC):
                         case _:
                             tool_outputs.append("Recorded")
 
+        turn.debug = debug_entries
         return message, out, deleted_ids, tool_outputs
 
     async def _translate_next_turn(self) -> bool:

@@ -82,7 +82,7 @@ class Word:
     speaker: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class Turn:
     """
     Represents an audio turn. That's a loose definition, essentially it just
@@ -95,6 +95,7 @@ class Turn:
     text: str
     final: bool
     words: list[Word] = field(default_factory=list)
+    debug: list[dict] = field(default_factory=list)
 
 
 class TranscriptReceiver(abc.ABC):

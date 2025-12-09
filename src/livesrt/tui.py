@@ -36,9 +36,8 @@ class DebugDetailsScreen(ModalScreen):
         background: $surface;
     }
 
-    DebugDetailsScreen .json-container {
+    DebugDetailsScreen .json-scroll {
         height: 1fr;
-        overflow: auto;
         padding: 1;
     }
 
@@ -57,9 +56,8 @@ class DebugDetailsScreen(ModalScreen):
         with Vertical():
             # Use Syntax with word_wrap=True to ensure text wrapping
             json_str = json.dumps(self.data, indent=2, ensure_ascii=False)
-            yield Static(
-                Syntax(json_str, "json", word_wrap=True), classes="json-container"
-            )
+            with VerticalScroll(classes="json-scroll"):
+                yield Static(Syntax(json_str, "json", word_wrap=True))
             yield Button("Close", variant="primary", id="close")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -84,6 +82,7 @@ class DebugGroup(Vertical):
 
     def __init__(self, turn_id: int):
         self.turn_id = turn_id
+        self.current_debug_data: list[dict] = []
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -237,7 +236,6 @@ class LiveSrtApp(App):
         self.source_widgets: dict[int, TurnWidget] = {}
         self.translated_widgets: dict[int, TranslatedWidget] = {}
         self._source_turns: dict[int, Turn] = {}
-        self._seen_debug_ids: set[int] = set()
         self._debug_groups: dict[int, DebugGroup] = {}
         self.auto_scroll = True
         self.receiver = AppReceiver(self)
@@ -292,21 +290,33 @@ class LiveSrtApp(App):
 
     async def _update_debug_panel(self, turns: list[TranslatedTurn]) -> None:
         debug_panel = self.query_one(DebugPanel)
-        for turn in turns:
-            if turn.debug and id(turn) not in self._seen_debug_ids:
-                self._seen_debug_ids.add(id(turn))
+        source_ids = {t.original_id for t in turns}
 
-                # Get or create group for this source turn
-                if turn.original_id not in self._debug_groups:
-                    group = DebugGroup(turn.original_id)
-                    self._debug_groups[turn.original_id] = group
-                    await debug_panel.mount(group)
-                else:
-                    group = self._debug_groups[turn.original_id]
+        for source_id in source_ids:
+            if source_id not in self._source_turns:
+                continue
 
-                await group.mount(
-                    DebugEntry(turn.debug["summary"], turn.debug["details"])
-                )
+            turn = self._source_turns[source_id]
+
+            # Get or create group for this source turn
+            if source_id not in self._debug_groups:
+                group = DebugGroup(source_id)
+                self._debug_groups[source_id] = group
+                await debug_panel.mount(group)
+            else:
+                group = self._debug_groups[source_id]
+
+            if group.current_debug_data == turn.debug:
+                continue
+
+            group.current_debug_data = turn.debug
+
+            # Clear existing debug entries
+            # Note: We await the removal of all DebugEntry widgets
+            await group.query(DebugEntry).remove()
+
+            for entry in turn.debug:
+                await group.mount(DebugEntry(entry["summary"], entry["details"]))
 
     async def receive_translations(self, turns: list[TranslatedTurn]) -> None:
         """Receive translated turns and update UI."""
