@@ -222,7 +222,8 @@ class LlmTranslator(Translator, abc.ABC):
 
                 tool_outputs = iter(entry.tool_outputs or [])
 
-                for tool_call in entry.completion.get("tool_calls") or []:
+                tool_calls = entry.completion.get("tool_calls") or []
+                for tool_call in tool_calls:
                     conversation.append(
                         dict(
                             role="tool",
@@ -231,12 +232,13 @@ class LlmTranslator(Translator, abc.ABC):
                         )
                     )
 
-                conversation.append(
-                    dict(
-                        role="assistant",
-                        content="ok",
+                if tool_calls:
+                    conversation.append(
+                        dict(
+                            role="assistant",
+                            content="ok",
+                        )
                     )
-                )
             else:
                 to_translate = entry
                 break
