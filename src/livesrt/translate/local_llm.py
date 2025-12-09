@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
 
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 MODELS = {
@@ -67,6 +70,33 @@ class LocalLLM(LlmTranslator):
         model_path = await download_model("ministral:8b:q4-k-m")
         self.llm = await init_model(model_path)
 
+    def _sanitize_messages(self, messages: list[dict]) -> list[dict]:
+        """
+        Modify messages to ensure strict User/Assistant alternation.
+        - 'tool' roles are converted to 'user' roles (prefixed).
+        - Consecutive messages of the same role are merged.
+        """
+        sanitized: list[dict] = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if role == "tool":
+                role = "user"
+                content = f"Tool output: {content}"
+
+            if sanitized and sanitized[-1]["role"] == role:
+                # Merge with previous message of the same role
+                prev = sanitized[-1]
+                if isinstance(prev["content"], str) and isinstance(content, str):
+                    prev["content"] += f"\n\n{content}"
+                else:
+                    # Fallback for non-string content (though unexpected here)
+                    prev["content"] = str(prev["content"]) + f"\n\n{content}"
+            else:
+                sanitized.append({"role": role, "content": content})
+        return sanitized
+
     @sync_to_async
     def completion(  # type: ignore
         self,
@@ -77,8 +107,15 @@ class LocalLLM(LlmTranslator):
         """
         Performs a completion call to the local LLM.
         """
-        return self.llm.create_chat_completion(  # type: ignore
+        start = time.perf_counter()
+
+        messages = self._sanitize_messages(messages)
+
+        response = self.llm.create_chat_completion(  # type: ignore
             messages=messages,  # type: ignore
             tools=tools,  # type: ignore
             tool_choice=tool_choice,  # type: ignore
         )
+        duration = time.perf_counter() - start
+        logger.info("Local LLM completion took %.2fs", duration)
+        return response  # type: ignore
