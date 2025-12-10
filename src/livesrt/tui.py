@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Log, Static
+from textual.worker import Worker, WorkerState
 
 from livesrt.transcribe.base import (
     AudioSource,
@@ -93,6 +94,29 @@ class DebugGroup(Vertical):
 
 class DebugPanel(VerticalScroll):
     """Panel to show debug entries."""
+
+
+class SettingsSection(Vertical):
+    """A section of settings."""
+
+    def __init__(self, title: str, settings: dict[str, str], **kwargs):
+        super().__init__(**kwargs)
+        self.title = title
+        self.settings = settings
+
+        def compose(self) -> ComposeResult:
+            """Compose the settings section layout."""
+
+            yield Static(self.title, classes="settings-title")
+
+            for key, value in self.settings.items():
+                yield Static(
+                    f"  [bold cyan]{key}:[/bold cyan] {value}", classes="setting-item"
+                )
+
+
+class SettingsPanel(VerticalScroll):
+    """Main panel for settings."""
 
 
 class TurnWidget(Static):
@@ -226,6 +250,30 @@ class LiveSrtApp(App):
         background: $surface;
         display: none;
     }
+    SettingsPanel {
+        width: 30%;
+        dock: left;
+        background: $surface;
+        border-right: solid $primary;
+        display: none;
+    }
+    SettingsPanel.-open {
+        display: block;
+    }
+    SettingsSection {
+        height: auto;
+        margin-bottom: 1;
+    }
+    .settings-title {
+        padding: 0 1;
+        text-style: bold;
+        background: $accent;
+        color: $text;
+    }
+    .setting-item {
+        padding: 0 1;
+        height: auto;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [  # type: ignore
@@ -233,6 +281,7 @@ class LiveSrtApp(App):
         Binding("s", "toggle_autoscroll", "Toggle Auto-Scroll"),
         Binding("d", "toggle_debug", "Debug"),
         Binding("l", "toggle_log", "Log"),
+        Binding("c", "toggle_settings", "Settings"),
     ]
 
     auto_scroll: bool = True
@@ -255,6 +304,11 @@ class LiveSrtApp(App):
             panel.styles.display = "block"
         else:
             panel.styles.display = "none"
+
+    def action_toggle_settings(self) -> None:
+        """Toggle settings panel."""
+        panel = self.query_one("#settings-panel")
+        panel.toggle_class("-open")
 
     def __init__(
         self,
@@ -280,10 +334,34 @@ class LiveSrtApp(App):
         yield VerticalScroll(id="content")
         yield Log(id="log-panel")
         yield DebugPanel(id="debug-panel")
+
+        with SettingsPanel(id="settings-panel"):
+            yield SettingsSection(
+                title="Audio Source", settings=self.source.get_settings()
+            )
+            yield SettingsSection(
+                title="Transcripter", settings=self.transcripter.get_settings()
+            )
+            if self.translator:
+                yield SettingsSection(
+                    title="Translator", settings=self.translator.get_settings()
+                )
+
         yield Footer()
 
+    async def health_check(self) -> None:
+        """
+        Runs a health check on all components.
+        """
+        await self.source.health_check()
+        await self.transcripter.health_check()
+        if self.translator:
+            await self.translator.health_check()
+
     async def on_mount(self):
-        """Handle app mount event."""
+        """
+        Handle app mount event.
+        """
         # Configure logging
         log_panel = self.query_one("#log-panel", Log)
         handler = LogWidgetHandler(log_panel)
@@ -299,8 +377,10 @@ class LiveSrtApp(App):
         logging.getLogger("livesrt").info("Logging initialized.")
 
         self.title = "LiveSRT"
+        self.sub_title = self.source.name
+
         if self.translator:
-            self.sub_title = "Translation Mode"
+            self.sub_title += " - Translation Mode"
             await self.translator.init()
             self.run_worker(
                 self.translator.process(self.receiver),
@@ -308,7 +388,7 @@ class LiveSrtApp(App):
                 group="services",
             )
         else:
-            self.sub_title = "Transcription Mode"
+            self.sub_title += " - Transcription Mode"
 
         self.run_worker(
             self.transcripter.process(self.source, self.receiver),
@@ -412,3 +492,9 @@ class LiveSrtApp(App):
     async def stop(self) -> None:
         """Called by transcripter/translator if they were to call it."""
         pass
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Called when a worker's state changes."""
+        if event.state == WorkerState.ERROR:
+            # The worker has failed. We exit and pass the error as the result.
+            self.exit(result=event.worker.error)

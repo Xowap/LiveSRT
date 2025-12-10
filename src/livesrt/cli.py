@@ -2,50 +2,21 @@
 The logic specific to the CLI interface
 """
 
-from dataclasses import dataclass
-from enum import Enum
-from typing import Literal
+import sys
+from pathlib import Path
 
 import httpx
-import keyring
 import pwinput
 import rich_click as click
 from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
 from rich.table import Table
 from rich.theme import Theme
 
 from livesrt.async_tools import run_sync
+from livesrt.config_template import DEFAULT_CONFIG_CONTENT
+from livesrt.constants import ProviderType
+from livesrt.containers import Container
 from livesrt.transcribe.audio_sources.mic import MicSourceFactory
-from livesrt.transcribe.audio_sources.replay_file import FileSourceFactory
-from livesrt.transcribe.base import (
-    AudioSource,
-    Transcripter,
-)
-from livesrt.transcribe.transcripters.aai import AssemblyAITranscripter
-from livesrt.transcribe.transcripters.elevenlabs import ElevenLabsTranscripter
-from livesrt.transcribe.transcripters.speechmatics import SpeechmaticsTranscripter
-from livesrt.translate import (
-    LocalLLM,
-    RemoteLLM,
-    Translator,
-)
-from livesrt.tui import LiveSrtApp
-
-
-class ProviderType(Enum):
-    """This is a provider for which we might want to register an API token"""
-
-    ASSEMBLY_AI = "assembly_ai"
-    ELEVENLABS = "elevenlabs"
-    SPEECHMATICS = "speechmatics"
-    GROQ = "groq"
-    MISTRAL = "mistral"
-    GOOGLE = "google"
-    DEEPINFRA = "deepinfra"
-    OPENROUTER = "openrouter"
-
 
 custom_theme = Theme(
     {
@@ -69,59 +40,66 @@ def validate_no_colon(ctx, param, value):
     return value
 
 
-@dataclass
-class ApiKeyStore:
-    """
-    Utility class that serves to store API keys
-    """
-
-    namespace: str
-    system: str = "livesrt"
-
-    def key(self, provider: str) -> str:
-        """Generates the key name used for storage of this provider"""
-
-        return f"{self.namespace}:{provider}"
-
-    def get(self, provider: str) -> str | None:
-        """Gets the API key for a provider, or None if it doesn't exist."""
-
-        return keyring.get_password(self.system, self.key(provider))
-
-    def set(self, provider: str, value: str) -> None:
-        """Sets the API key for a provider"""
-
-        keyring.set_password(self.system, self.key(provider), value)
-
-
-@dataclass
-class Context:
-    """
-    Internal context of the CLI app
-    """
-
-    namespace: str
-    store: ApiKeyStore
-
-
 @click.group()
 @click.option(
-    *["--namespace", "-n"],
-    default="default",
-    help="The namespace into which to store this key.",
-    show_default=True,
-    callback=validate_no_colon,
+    "--config",
+    "-c",
+    default="config.yml",
+    help="Path to the configuration file.",
+    type=click.Path(dir_okay=False),
 )
 @click.pass_context
-def cli(ctx, namespace: str):
+def cli(ctx, config):
     """
     Main entrypoint of the whole thing
     """
+    container = Container()
 
-    ctx.obj = Context(
-        namespace=namespace,
-        store=ApiKeyStore(namespace),
-    )
+    # Load configuration
+    config_path = Path(config)
+    if config_path.exists():
+        container.config.from_yaml(str(config_path))
+    else:
+        # If the user didn't provide a config and the default doesn't exist,
+        # we might want to warn or just use defaults if possible.
+        # But for now, let's assume if it's explicitly passed it must exist,
+        # but if it's default and missing, we might proceed with defaults
+        # if defined in container.
+        # However, our container relies on config for many things.
+        if config != "config.yml":
+            console.print(f"[warning] Configuration file {config} not found.[/warning]")
+
+    ctx.obj = container
+
+
+@cli.command()
+@click.option(
+    "--output",
+    "-o",
+    default="config.yml",
+    help="Path to the output configuration file.",
+    type=click.Path(dir_okay=False, writable=True, resolve_path=True),
+)
+def init_config(output):
+    """
+    Creates a default configuration file.
+    """
+    output_path = Path(output)
+
+    if output_path.exists():
+        if not click.confirm(
+            f"File {output_path} already exists. Overwrite?",
+            abort=False,
+        ):
+            console.print("[yellow]Operation cancelled.[/yellow]")
+            return
+
+    try:
+        output_path.write_text(DEFAULT_CONFIG_CONTENT)
+        console.print(f"[green]Default configuration written to {output_path}[/green]")
+    except Exception as e:
+        console.print(f"[bold red]Error writing config file: {e}[/bold red]")
+        sys.exit(1)
 
 
 @cli.command()
@@ -135,7 +113,7 @@ def cli(ctx, namespace: str):
     help="Your secret API key.",
 )
 @click.pass_obj
-def set_token(obj: Context, provider, api_key):
+def set_token(container: Container, provider, api_key):
     """
     Sets the API token for a specific provider.
     """
@@ -148,7 +126,9 @@ def set_token(obj: Context, provider, api_key):
         console.print("\n[warning]🫡 Not setting anything")
         return
 
-    obj.store.set(provider, api_key)
+    # access the singleton ApiKeyStore
+    store = container.api_key_store()
+    store.set(provider, api_key)
 
     console.print(
         f"\n[green]✔[/green] Configuration started for "
@@ -175,350 +155,45 @@ def list_microphones():
     console.print(table)
 
 
-def display_http_error(error: httpx.HTTPError) -> None:
-    """Display a formatted HTTP error with request and response details."""
-
-    # Build error content
-    content_parts = []
-
-    # Request information
-    if hasattr(error, "request") and error.request:
-        request = error.request
-        request_table = Table(
-            show_header=False, box=None, padding=(0, 1), pad_edge=False
-        )
-        request_table.add_column(style="bold")
-        request_table.add_column(style="cyan")
-        request_table.add_row("Method:", request.method)
-        request_table.add_row("URL:", str(request.url))
-
-        content_parts.append(
-            Panel(
-                request_table,
-                title="[bold]Request",
-                title_align="left",
-                border_style="yellow",
-                padding=(0, 1),
-            )
-        )
-
-    # Response information
-    if hasattr(error, "response") and error.response:
-        response = error.response
-
-        # Status code with color based on severity
-        status_color = "red" if response.status_code >= 500 else "yellow"
-
-        response_table = Table(
-            show_header=False, box=None, padding=(0, 1), pad_edge=False
-        )
-        response_table.add_column(style="bold")
-        response_table.add_column()
-        response_table.add_row(
-            "Status:",
-            f"[{status_color}]{response.status_code}[/{status_color}] "
-            f"[dim]{response.reason_phrase}[/dim]",
-        )
-
-        # Try to parse and display JSON response
-        try:
-            json_data = response.json()
-            response_table.add_row("Body:", "")
-
-            response_panel = Panel(
-                response_table,
-                title="[bold]Response",
-                title_align="left",
-                border_style="red",
-                padding=(0, 1),
-            )
-            content_parts.append(response_panel)
-            content_parts.append(
-                Panel(
-                    JSON.from_data(json_data),
-                    title="[bold]Response Body (JSON)",
-                    title_align="left",
-                    border_style="red",
-                    padding=(0, 1),
-                )
-            )
-        except Exception:
-            # If not JSON or can't parse, show raw text
-            text = response.text[:500]  # Limit to first 500 chars
-            body_text = text if text else "[dim](empty)[/dim]"
-            if len(response.text) > 500:
-                body_text += "\n[dim]... (truncated)[/dim]"
-
-            response_table.add_row("Body:", body_text)
-            content_parts.append(
-                Panel(
-                    response_table,
-                    title="[bold]Response",
-                    title_align="left",
-                    border_style="red",
-                    padding=(0, 1),
-                )
-            )
-    else:
-        # Connection errors, etc. without a response
-        error_table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
-        error_table.add_column(style="bold")
-        error_table.add_column()
-        error_table.add_row("Type:", f"[red]{type(error).__name__}[/red]")
-        error_table.add_row("Message:", str(error))
-
-        content_parts.append(
-            Panel(
-                error_table,
-                title="[bold]Error",
-                title_align="left",
-                border_style="red",
-                padding=(0, 1),
-            )
-        )
-
-    # Display all parts
-    console.print()
-    console.print(
-        Panel(
-            "\n\n".join([""]) * (len(content_parts) - 1),  # Spacer
-            title="[bold red]❌ HTTP ERROR",
-            title_align="center",
-            border_style="bold red",
-            padding=(0, 1),
-        )
-    )
-
-    for part in content_parts:
-        console.print(part)
-
-    console.print()
-
-
 @cli.command()
 @click.option(
-    *["--device", "-d"],
-    type=int,
-    default=None,
-    help="The index of the device to use.",
-    required=False,
-)
-@click.option(
-    *["--provider", "-p"],
-    type=click.Choice([p.value for p in ProviderType], case_sensitive=False),
-    default=ProviderType.ASSEMBLY_AI.value,
-    help="The transcription provider to use.",
-)
-@click.option(
-    *["--region", "-r"],
-    type=click.Choice(["eu", "us"]),
-    default="eu",
-    help="Region (AssemblyAI only)",
-)
-@click.option(
-    *["--language", "-l"],
-    type=str,
-    required=False,
-    default=None,
-    help="Language code (Mandatory for Speechmatics, e.g. 'en', 'fr').",
-)
-@click.option(
-    *["--replay-file", "-f"],
-    type=click.Path(exists=True, dir_okay=False),
-    help=(
-        "If specified, the content of this file will be used instead of the "
-        "actual microphone. It still goes through the same API, this is mostly "
-        "useful for debugging purposes. Requires `ffmpeg`."
-    ),
+    "--translate/--no-translate",
+    default=False,
+    help="Enable translation.",
 )
 @click.pass_obj
 @run_sync
-async def transcribe(
-    obj: Context,
-    provider: str,
-    region: Literal["eu", "us"],
-    language: str | None,
-    replay_file: str,
-    device: int | None = None,
-):
-    """Transcribes live the audio from the microphone"""
-
-    source = await _make_audio_source(device, replay_file, provider)
-    transcripter = await _make_transcripter(obj, language, provider, region)
-
-    if transcripter:
-        app = LiveSrtApp(source=source, transcripter=transcripter)
-        await app.run_async()
-
-
-@cli.command()
-@click.argument("lang_to", type=str)
-@click.option(
-    "--lang-from",
-    type=str,
-    default="",
-    help="The language to translate from (optional, auto-detect if omitted).",
-)
-@click.option(
-    "--translation-engine",
-    type=click.Choice(["mock", "local-llm", "remote-llm"], case_sensitive=False),
-    default="local-llm",
-    help="The translation engine to use.",
-    show_default=True,
-)
-@click.option(
-    "--model",
-    default="groq/openai/gpt-oss-120b",
-    help="Name of the model for the remote LLM",
-    show_default=True,
-)
-@click.option(
-    *["--device", "-d"],
-    type=int,
-    default=None,
-    help="The index of the device to use.",
-    required=False,
-)
-@click.option(
-    *["--provider", "-p"],
-    type=click.Choice([p.value for p in ProviderType], case_sensitive=False),
-    default=ProviderType.ASSEMBLY_AI.value,
-    help="The transcription provider to use.",
-)
-@click.option(
-    *["--region", "-r"],
-    type=click.Choice(["eu", "us"]),
-    default="eu",
-    help="Region (AssemblyAI only)",
-)
-@click.option(
-    *["--language", "-l"],
-    type=str,
-    required=False,
-    default=None,
-    help="Language code (Mandatory for Speechmatics, e.g. 'en', 'fr').",
-)
-@click.option(
-    *["--replay-file", "-f"],
-    type=click.Path(exists=True, dir_okay=False),
-    help=(
-        "If specified, the content of this file will be used instead of the "
-        "actual microphone. It still goes through the same API, this is mostly "
-        "useful for debugging purposes. Requires `ffmpeg`."
-    ),
-)
-@click.pass_obj
-@run_sync
-async def translate(
-    obj: Context,
-    lang_to: str,
-    lang_from: str,
-    translation_engine: str,
-    provider: str,
-    region: Literal["eu", "us"],
-    language: str | None,
-    replay_file: str,
-    model: str = "",
-    device: int | None = None,
-):
+async def run(container: Container, translate: bool):
     """
-    Transcribes live audio and translates it to the target language.
+    Run the LiveSRT application.
     """
 
-    source = await _make_audio_source(device, replay_file, provider)
-    transcripter = await _make_transcripter(obj, language, provider, region)
-    translator = await _make_translator(
-        translation_engine, lang_to, lang_from, model, obj.store
-    )
+    # Override translation enabled status
+    if translate:
+        container.config.translation.enabled.from_value(True)
 
-    if transcripter:
-        app = LiveSrtApp(
-            source=source, transcripter=transcripter, translator=translator
-        )
-        await app.run_async()
+    try:
+        app = container.app()
 
+        with console.status("[bold green]Performing health checks..."):
+            await app.health_check()
 
-async def _make_translator(
-    engine: str,
-    lang_to: str,
-    lang_from: str,
-    model: str,
-    keys: ApiKeyStore,
-) -> Translator:
-    if engine == "local-llm":
-        return LocalLLM(lang_to=lang_to, lang_from=lang_from)
-    elif engine == "remote-llm":
-        provider, _, _ = model.partition("/")
+        result = await app.run_async()
 
-        if not (key := keys.get(provider)) and provider != "ollama":
-            msg = f"No key stored for {provider}"
-            raise click.ClickException(msg)
+        if isinstance(result, Exception):
+            if (
+                isinstance(result, httpx.HTTPStatusError)
+                and result.response.status_code == 401
+            ):
+                console.print(f"[bold red]Authentication Error:[/bold red] {result}")
+                console.print(
+                    "[yellow]Please check your API key configuration in config.yaml "
+                    "or use 'livesrt set-token'.[/yellow]"
+                )
+            else:
+                console.print(f"[bold red]Application Error:[/bold red] {result}")
+            sys.exit(1)
 
-        return RemoteLLM(
-            lang_to=lang_to,
-            lang_from=lang_from,
-            model=model,
-            api_key=(key or ""),
-        )
-
-    msg = f"Unknown translation engine: {engine}"
-    raise click.ClickException(msg)
-
-
-async def _make_transcripter(
-    context: Context, language: str | None, provider: str, region: Literal["eu", "us"]
-) -> Transcripter | None:
-    # Initialize Transcripter
-    transcripter: Transcripter | None = None
-
-    if provider == ProviderType.ASSEMBLY_AI.value:
-        if not (key := context.store.get("assembly_ai")):
-            msg = "Assembly AI key not found, set it with `set-token assembly_ai`."
-            raise click.ClickException(msg)
-        transcripter = AssemblyAITranscripter(api_key=key, region=region)
-
-    elif provider == ProviderType.ELEVENLABS.value:
-        if not (key := context.store.get("elevenlabs")):
-            msg = "ElevenLabs key not found, set it with `set-token elevenlabs`."
-            raise click.ClickException(msg)
-        transcripter = ElevenLabsTranscripter(api_key=key)
-
-    elif provider == ProviderType.SPEECHMATICS.value:
-        if not (key := context.store.get("speechmatics")):
-            msg = "Speechmatics key not found, set it with `set-token speechmatics`."
-            raise click.ClickException(msg)
-
-        if not language:
-            msg = (
-                "Language is mandatory for Speechmatics. Use --language or -l "
-                "(e.g. 'en')."
-            )
-            raise click.BadParameter(msg, param_hint="--language")
-
-        transcripter = SpeechmaticsTranscripter(api_key=key, language=language)
-
-    else:
-        msg = f"Unknown provider: {provider}"
-        raise click.ClickException(msg)
-    return transcripter
-
-
-async def _make_audio_source(
-    device: int | None, replay_file: str, provider: str
-) -> AudioSource:
-    # Initialize Audio Source
-    sample_rate: Literal[16_000, 48_000] = (
-        48_000 if provider == ProviderType.SPEECHMATICS.value else 16_000
-    )
-
-    source: AudioSource
-    if replay_file:
-        file_factory = FileSourceFactory(sample_rate=sample_rate, realtime=True)
-        source = file_factory.create_source(replay_file)
-    else:
-        mic_factory = MicSourceFactory(sample_rate=sample_rate)
-        if device is not None and not mic_factory.is_device_valid(device):
-            msg = f"Device #{device} is not a valid device."
-            raise click.BadParameter(msg, param_hint="--device")
-        source = mic_factory.create_source(device)
-    return source
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(1)

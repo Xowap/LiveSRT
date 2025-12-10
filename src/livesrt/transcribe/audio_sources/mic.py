@@ -146,6 +146,44 @@ class MicSource(AudioSource):
             if self._thread:
                 self._thread.join(timeout=1.0)
 
+    async def health_check(self) -> None:
+        """Checks if the microphone device is available."""
+
+        # This runs in a thread to avoid blocking the loop with PyAudio
+        def _check():
+            try:
+                if self.device_index is not None:
+                    self.p.get_device_info_by_index(self.device_index)
+                else:
+                    self.p.get_default_input_device_info()
+            except OSError as e:
+                # PyAudio raises OSError if device not found
+                error_msg = f"Microphone device error: {e}"
+                raise ValueError(error_msg) from e
+
+        await asyncio.to_thread(_check)
+
+    @property
+    def name(self) -> str:
+        """Returns a friendly name for the audio source."""
+        try:
+            if self.device_index is not None:
+                info = self.p.get_device_info_by_index(self.device_index)
+                return f"Mic #{self.device_index} ({info.get('name')})"
+            else:
+                info = self.p.get_default_input_device_info()
+                return f"Default Mic ({info.get('name')})"
+        except Exception:
+            return f"Mic #{self.device_index}" if self.device_index else "Default Mic"
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            **super().get_settings(),
+            "Buffer Duration": str(self.config.frames_per_buffer / self.sample_rate)
+            + "s",
+        }
+
 
 @dataclass
 class MicSourceFactory:

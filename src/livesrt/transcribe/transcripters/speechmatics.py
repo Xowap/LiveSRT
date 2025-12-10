@@ -223,6 +223,31 @@ class SpeechmaticsTranscripter(Transcripter):
     tb: TranscriptBuilder = field(default_factory=TranscriptBuilder)
     turn_id: int = field(default=0, init=False)
 
+    async def health_check(self) -> None:
+        """Checks if the API key is valid."""
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
+            # We just want to handshake.
+            async with websockets.connect(self.url, additional_headers=headers):
+                pass
+        except websockets.exceptions.InvalidStatusCode as e:  # type: ignore[attr-defined]
+            if e.status_code == 401:
+                error_msg = "Invalid Speechmatics API key."
+                raise ValueError(error_msg) from e
+            error_msg = f"Speechmatics connection failed: {e}"
+            raise RuntimeError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Speechmatics connection failed: {e}"
+            raise RuntimeError(error_msg) from e
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            "Provider": "Speechmatics",
+            "Language": self.language,
+            "URL": self.url,
+        }
+
     async def process(self, source: AudioSource, receiver: TranscriptReceiver) -> None:
         """
         Main processing loop.

@@ -21,6 +21,7 @@ Here's a quick demonstration of LiveSRT in action:
 - **Intelligent Post-processing:** Uses LLMs to clean up stutters, fix ASR
   errors, and separate speakers.
 - **Audio Sources:** Support for microphones and audio file replay (via ffmpeg).
+- **Configurable:** Uses a YAML configuration file for reproducible setups.
 
 ## 🔌 Supported Providers
 
@@ -33,120 +34,130 @@ Here's a quick demonstration of LiveSRT in action:
 ### Translation (LLMs)
 
 - **Local LLMs:** Runs locally via `llama.cpp` (e.g., Ministral, Qwen).
-- **Remote LLMs:** Support for Groq, Mistral, Google Gemini, DeepInfra, and
-  OpenRouter.
+- **Remote LLMs:** Support for Groq, Mistral, Google Gemini, DeepInfra, Ollama
+  and OpenRouter.
 
 ## 🚀 Quick Start
 
 As this is a PyPI package, you can run it directly without any installation
 using `uvx` (or install via pip).
 
-### 1. Basic Transcription
+### 1. Initialization
 
-1.  **Set your Transcription API key (AssemblyAI is default):**
-    ```bash
-    uvx livesrt set-token assembly_ai
-    ```
-2.  **Start transcribing:**
-    ```bash
-    uvx livesrt transcribe
-    ```
-
-### 2. Live Translation (Local LLM)
-
-This runs the translation model on your machine. It requires no API key for
-translation but needs a decent CPU/GPU. It will download the model automatically
-on first run.
+First, create a default configuration file. This allows you to select your audio
+source, transcription backend, and translation settings.
 
 ```bash
-# Transcribe (using AssemblyAI) and translate to French using a local model
-uvx livesrt translate "French"
+uvx livesrt init-config
+# Created config.yml
 ```
 
-### 3. Live Translation (Remote LLM)
+### 2. Authentication
 
-For faster performance without local hardware load, use a remote provider (e.g.,
-Groq).
+Set the API key for your chosen provider (default is AssemblyAI). Keys are
+stored securely in your system keyring.
 
-1.  **Set your LLM API key:**
-    ```bash
-    uvx livesrt set-token groq
-    ```
-2.  **Run translation:**
-    ```bash
-    uvx livesrt translate "Spanish" --translation-engine remote-llm --model "groq/openai/gpt-oss-120b"
-    ```
+```bash
+uvx livesrt set-token assembly_ai
+```
+
+### 3. Run
+
+Start the application using the configuration from `config.yml`.
+
+```bash
+uvx livesrt run
+```
+
+To enable translation (if disabled in config), you can use the flag:
+
+```bash
+uvx livesrt run --translate
+```
+
+## ⚙ Configuration
+
+LiveSRT relies on a `config.yml` file. You can generate a template using
+`livesrt init-config`.
+
+### Key Configuration Sections:
+
+- **Audio:** Select `mic` or `file`. If using a microphone, find your device
+  index using `livesrt list-microphones`.
+- **Transcription:** Choose between `assembly_ai`, `elevenlabs`, or
+  `speechmatics`.
+- **Translation:** Toggle enabled/disabled, choose `local-llm` or `remote-llm`,
+  and set source/target languages.
+- **API Keys:** Manage namespaces for multiple environments.
 
 ## 📝 Command Reference
 
-All commands start with `livesrt`.
+All commands start with `livesrt`. Use `--help` on any command for more details.
 
-### Global Options
+### `livesrt init-config`
 
-These options apply to all commands.
+Creates a default `config.yml` in the current directory.
 
-- `--namespace`, `-n <name>`: The namespace to use for storing keys and
-  configuration (default: `default`). Useful for managing multiple environments
-  or profiles.
+- `--output`, `-o`: Path to the output file (default: `config.yml`).
 
-### `livesrt set-token <provider>`
+### `livesrt run [OPTIONS]`
 
-Sets the API token for a specific provider.
+Runs the main application using the loaded configuration.
+
+- `--config`, `-c`: Path to the configuration file (default: `config.yml`).
+- `--translate / --no-translate`: Override the translation setting in the
+  config.
+
+### `livesrt set-token <provider> [OPTIONS]`
+
+Sets the API token for a specific provider securely.
 
 - `<provider>` choices:
     - ASR: `assembly_ai`, `elevenlabs`, `speechmatics`
-    - LLM: `groq`, `mistral`, `google`, `deepinfra`, `openrouter`
-- `--api-key <key>`, `-k <key>`: (Optional) Your secret API key. If omitted, you
-  are prompted securely.
+    - LLM: `groq`, `mistral`, `google`, `deepinfra`, `openrouter`, `ollama`
+- `--api-key`, `-k`: (Optional) Your secret API key. If omitted, you are
+  prompted securely.
 
 ### `livesrt list-microphones`
 
-Lists all available input microphone devices and their IDs.
-
-### `livesrt transcribe [OPTIONS]`
-
-Starts live transcription without translation.
-
-- `--provider`, `-p`: The transcription provider (default: `assembly_ai`).
-- `--device`, `-d <index>`: Microphone device index.
-- `--replay-file`, `-f <path>`: Use a file as audio source.
-- `--language`, `-l <code >`: Language code (Mandatory for Speechmatics).
-- `--region`, `-r`: API region (AssemblyAI only).
-
-### `livesrt translate <lang_to> [OPTIONS]`
-
-Starts live transcription and translates it to the target language.
-
-- **`<lang_to>`**: (Required) The target language (e.g., "French", "Japanese").
-- `--lang-from`: Source language (optional, LLM can usually infer it).
-- `--translation-engine`:
-    - `local-llm` (default): Runs a model locally (e.g., Ministral 8B).
-    - `remote-llm`: Uses an external API.
-- `--model`: Specific model string.
-    - For remote: `provider/model-name` (e.g., `mistral/mistral-large-latest`).
-- _Plus all options available in `transcribe` (provider, device, file, etc.)._
+Lists all available input microphone devices and their IDs. Use the resulting ID
+to update the `device_index` in your `config.yml`.
 
 ## 💡 Usage Scenarios
 
 ### Using a specific microphone
 
-1.  List devices: `uvx livesrt list-microphones`
-2.  Run: `uvx livesrt transcribe --device 2`
+1.  List devices: `uvx livesrt list-microphones`.
+2.  Edit `config.yml`: Set `audio.device_index` to the desired ID.
+3.  Run: `uvx livesrt run`.
 
 ### Debugging with a file
 
 Simulate a live stream using an audio file (requires `ffmpeg`):
 
-```bash
-uvx livesrt translate "German" --replay-file ./interview.wav
-```
+1.  Edit `config.yml`:
+    ```yaml
+    audio:
+        source_type: file
+        file_path: "./interview.wav"
+    ```
+2.  Run: `uvx livesrt run`.
 
-### Using ElevenLabs for ASR
+### Live Translation with Remote LLM
 
-```bash
-uvx livesrt set-token elevenlabs
-uvx livesrt transcribe --provider elevenlabs
-```
+To offload processing to a fast remote API (e.g., Groq):
+
+1.  Set the key: `uvx livesrt set-token groq`.
+2.  Edit `config.yml`:
+    ```yaml
+    translation:
+        enabled: true
+        engine: remote-llm
+        remote_llm:
+            lang_to: Spanish
+            model: groq/llama-3.3-70b-versatile
+    ```
+3.  Run: `uvx livesrt run`.
 
 ## 🛠 Development
 
@@ -168,7 +179,9 @@ The `Makefile` contains helpers for common tasks:
 
 ## 🏗 Code Structure
 
-- **`src/livesrt/cli.py`**: Entry point and CLI logic.
+- **`src/livesrt/cli.py`**: Entry point and CLI logic using `click`.
+- **`src/livesrt/containers.py`**: Dependency Injection container used to wire
+  components based on configuration.
 - **`src/livesrt/tui.py`**: The Textual-based UI implementation.
 - **`src/livesrt/transcribe/`**: Audio capture and ASR logic.
     - **`transcripters/`**: Implementations for AssemblyAI, ElevenLabs,

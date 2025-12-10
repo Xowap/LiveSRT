@@ -59,6 +59,29 @@ class AssemblyAITranscripter(Transcripter):
             resp.raise_for_status()
             return resp.json()["token"]
 
+    async def health_check(self) -> None:
+        """Checks if the API key is valid by making a lightweight request."""
+        try:
+            await self._get_stream_token()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                error_msg = "Invalid AssemblyAI API key."
+                raise ValueError(error_msg) from e
+            raise
+        except Exception as e:
+            error_msg = f"AssemblyAI connection failed: {e}"
+            raise RuntimeError(error_msg) from e
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            "Provider": "AssemblyAI",
+            "Region": self.region,
+            "Model": self.speech_model,
+            "Language Detection": str(self.language_detection),
+            "End of Turn Threshold": str(self.end_of_turn_confidence_threshold),
+        }
+
     async def process(self, source: AudioSource, receiver: TranscriptReceiver) -> None:
         """
         Main processing loop. connects to AAI, streams audio from source,
@@ -108,13 +131,15 @@ class AssemblyAITranscripter(Transcripter):
             try:
                 done, _ = await asyncio.wait(
                     [tx_t, rx_t],
-                    return_when=asyncio.FIRST_EXCEPTION,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
 
                 # Check for exceptions
                 for task in done:
                     if not task.cancelled():
-                        task.result()
+                        exc = task.exception()
+                        if exc:
+                            raise exc
 
             except asyncio.CancelledError:
                 should_send_terminate.set()

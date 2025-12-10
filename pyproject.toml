@@ -22,6 +22,7 @@ dependencies = [
     "huggingface-hub~=1.2.1",
     "llama-cpp-python~=0.3.16",
     "textual>=6.8.0",
+    "dependency-injector>=4.48.3",
 ]
 
 [project.scripts]

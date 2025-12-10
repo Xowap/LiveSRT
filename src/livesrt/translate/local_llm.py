@@ -61,14 +61,34 @@ def init_model(model_path: str, context_size: int = 10_000) -> Llama:
 class LocalLLM(LlmTranslator):
     """A translator that uses a local LLM."""
 
+    model: str = "ministral:8b:q4-k-m"
     llm: Llama = field(init=False)
 
     async def init(self):
         """
         Initialize a local LLM.
         """
-        model_path = await download_model("ministral:8b:q4-k-m")
+        if hasattr(self, "llm"):
+            return
+
+        model_path = await download_model(self.model)
         self.llm = await init_model(model_path)
+
+    async def health_check(self) -> None:
+        """Checks if the model can be loaded."""
+        try:
+            await self.init()
+        except Exception as e:
+            error_msg = f"Failed to initialize Local LLM: {e}"
+            raise RuntimeError(error_msg) from e
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            "Type": "Local LLM",
+            **super().get_settings(),
+            "Model": self.model,
+        }
 
     def _sanitize_messages(self, messages: list[dict]) -> list[dict]:
         """

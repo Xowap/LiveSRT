@@ -36,6 +36,30 @@ class ElevenLabsTranscripter(Transcripter):
         """The WebSocket URL for the ElevenLabs API."""
         return "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 
+    async def health_check(self) -> None:
+        """Checks if the API key is valid."""
+        url = "https://api.elevenlabs.io/v1/user"
+        headers = {"xi-api-key": self.api_key}
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 401:
+                    error_msg = "Invalid ElevenLabs API key."
+                    raise ValueError(error_msg)
+                resp.raise_for_status()
+            except httpx.HTTPError as e:
+                error_msg = f"ElevenLabs connection failed: {e}"
+                raise RuntimeError(error_msg) from e
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            "Provider": "ElevenLabs",
+            "Model": self.model_id,
+            "Commit Strategy": self.commit_strategy,
+            "VAD Threshold": f"{self.vad_silence_threshold_secs}s",
+        }
+
     async def process(self, source: AudioSource, receiver: TranscriptReceiver) -> None:
         """
         Main processing loop. Connects to ElevenLabs, streams audio,

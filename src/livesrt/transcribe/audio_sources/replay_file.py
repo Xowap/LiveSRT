@@ -170,6 +170,28 @@ class FileSource(AudioSource):
                 if self._process and self._process.returncode is None:
                     self._process.kill()
 
+    async def health_check(self) -> None:
+        """Checks if the file exists."""
+        if not self.file_path.exists():
+            error_msg = f"Audio file not found: {self.file_path}"
+            raise FileNotFoundError(error_msg)
+        if not self.file_path.is_file():
+            error_msg = f"Path is not a file: {self.file_path}"
+            raise ValueError(error_msg)
+
+    @property
+    def name(self) -> str:
+        """Returns a friendly name for the audio source."""
+        return f"Replay of {self.file_path.name}"
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            **super().get_settings(),
+            "Realtime": str(self.realtime),
+            "File Size": f"{self.file_path.stat().st_size / 1024 / 1024:.2f} MB",
+        }
+
 
 @dataclass
 class FileSourceFactory:

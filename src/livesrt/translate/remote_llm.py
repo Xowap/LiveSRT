@@ -148,6 +148,23 @@ class RemoteLLM(LlmTranslator):
     model: str = "openrouter/mistralai/ministral-8b-2512"
     api_key: str
 
+    async def health_check(self) -> None:
+        """Checks if the API key is present."""
+        if not self.api_key:
+            provider, _, _ = self.model.partition("/")
+            error_msg = f"API key for {provider} is missing."
+            raise ValueError(error_msg)
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        provider, _, model_id = self.model.partition("/")
+        return {
+            "Type": "Remote LLM",
+            **super().get_settings(),
+            "Provider": provider,
+            "Model": model_id,
+        }
+
     async def completion(
         self,
         messages: list[dict],

@@ -54,6 +54,30 @@ class AudioSource(abc.ABC):
 
         raise NotImplementedError
 
+    async def health_check(self) -> None:
+        """
+        Checks if the audio source is available and functioning.
+        Should raise an exception if not.
+        """
+        return
+
+    @property
+    def name(self) -> str:
+        """
+        Returns a friendly name for the audio source.
+        """
+        return "Audio Source"
+
+    def get_settings(self) -> dict[str, str]:
+        """
+        Returns a dictionary of relevant settings for display.
+        """
+        return {
+            "Format": self.get_format(),
+            "Sample Rate": f"{self.get_sample_rate()} Hz",
+            "Depth": f"{self.get_depth()} bits",
+        }
+
 
 @dataclass
 class Word:
@@ -141,3 +165,16 @@ class Transcripter(abc.ABC):
         happens first.
         """
         raise NotImplementedError
+
+    async def health_check(self) -> None:
+        """
+        Checks if the transcription service is available (e.g. API key validity).
+        Should raise an exception if not.
+        """
+        return
+
+    def get_settings(self) -> dict[str, str]:
+        """
+        Returns a dictionary of relevant settings for display.
+        """
+        return {}

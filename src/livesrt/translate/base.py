@@ -80,6 +80,19 @@ class Translator(abc.ABC):
         a way to have retries and other strategies.
         """
 
+    async def health_check(self) -> None:
+        """
+        Checks if the translation service is available.
+        Should raise an exception if not.
+        """
+        return
+
+    def get_settings(self) -> dict[str, str]:
+        """
+        Returns a dictionary of relevant settings for display.
+        """
+        return {}
+
 
 @dataclass
 class LlmTranslationEntry:
@@ -106,6 +119,13 @@ class LlmTranslator(Translator, abc.ABC):
     has_new_turns: asyncio.Event = field(default_factory=asyncio.Event)
     turns: dict[int, LlmTranslationEntry] = field(default_factory=dict)
     _queued_turns: list[Turn] = field(default_factory=list)
+
+    def get_settings(self) -> dict[str, str]:
+        """Returns a dictionary of relevant settings for display."""
+        return {
+            "From": self.lang_from or "Auto",
+            "To": self.lang_to,
+        }
 
     async def update_turns(self, turns: list[Turn]) -> None:
         """
