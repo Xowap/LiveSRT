@@ -410,10 +410,13 @@ class LiveSrtApp(App):
         else:
             widget = TurnWidget(turn)
             self.source_widgets[turn.id] = widget
-            await container.mount(widget)
+            if container.children:
+                await container.mount(widget, before=container.children[0])
+            else:
+                await container.mount(widget)
 
         if self.auto_scroll:
-            container.scroll_end()
+            container.scroll_home()
         if self.translator:
             await self.translator.update_turns(list(self._source_turns.values()))
 
@@ -480,13 +483,16 @@ class LiveSrtApp(App):
                     container.move_child(widget, after=anchor)
                 anchors[turn.original_id] = widget
             elif widget.parent is None:
-                await container.mount(widget)
+                if container.children:
+                    await container.mount(widget, before=container.children[0])
+                else:
+                    await container.mount(widget)
 
         # 2. Update debug panel (process ALL turns)
         await self._update_debug_panel(turns)
 
         if self.auto_scroll:
-            container.scroll_end()
+            container.scroll_home()
             debug_panel.scroll_end()
 
     async def stop(self) -> None:
