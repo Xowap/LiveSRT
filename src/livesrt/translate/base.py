@@ -228,7 +228,15 @@ class LlmTranslator(Translator, abc.ABC):
         conversation = []
         to_translate: LlmTranslationEntry | None = None
 
-        for entry in sorted(self.turns.values(), key=lambda t: t.turn.id):
+        all_turns = sorted(self.turns.values(), key=lambda t: t.turn.id)
+        keep_turns = 10 + len(all_turns) % 10
+        start_index = max(0, len(all_turns) - keep_turns)
+
+        for entry in all_turns[:start_index]:
+            if entry.translated:
+                turn_id += len(entry.translated)
+
+        for entry in all_turns[start_index:]:
             conversation.append(
                 dict(
                     role="user",
