@@ -52,7 +52,11 @@ async def test_translate_returns_id():
                                     "arguments": json.dumps(
                                         {
                                             "lines": [
-                                                {"speaker": "me", "text": "Bonjour"}
+                                                {
+                                                    "speaker": "me",
+                                                    "text": "Bonjour",
+                                                    "status": "success",
+                                                }
                                             ]
                                         }
                                     ),
@@ -117,7 +121,11 @@ async def test_delete_turn():
                                     "arguments": json.dumps(
                                         {
                                             "lines": [
-                                                {"speaker": "me", "text": "Bonjour"}
+                                                {
+                                                    "speaker": "me",
+                                                    "text": "Bonjour",
+                                                    "status": "success",
+                                                }
                                             ]
                                         }
                                     ),
@@ -168,6 +176,7 @@ async def test_delete_turn():
                                                 {
                                                     "speaker": "me",
                                                     "text": "Bonjour le monde",
+                                                    "status": "success",
                                                 }
                                             ]
                                         }
