@@ -2,6 +2,7 @@
 The logic specific to the CLI interface
 """
 
+import importlib.metadata
 import sys
 from pathlib import Path
 
@@ -40,7 +41,26 @@ def validate_no_colon(ctx, param, value):
     return value
 
 
+def print_version(ctx, _, value):
+    """Prints the version and exits."""
+    if not value or ctx.resilient_parsing:
+        return
+
+    version_str = importlib.metadata.version("livesrt")
+    console.print(f"[bold green]livesrt version: [bold yellow]{version_str}[/]")
+
+    ctx.exit()
+
+
 @click.group()
+@click.option(
+    "--version",
+    is_flag=True,
+    callback=print_version,
+    expose_value=False,
+    is_eager=True,
+    help="Show the version and exit.",
+)
 @click.option(
     "--config",
     "-c",
