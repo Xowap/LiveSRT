@@ -2,6 +2,8 @@
 TUI implementation for LiveSRT
 """
 
+import colorsys
+import hashlib
 import json
 import logging
 from typing import ClassVar
@@ -21,6 +23,35 @@ from livesrt.transcribe.base import (
     Turn,
 )
 from livesrt.translate import TranslatedTurn, TranslationReceiver, Translator
+
+
+def get_speaker_color(speaker: str) -> str:
+    """
+    Generate a consistent, high-contrast color for a speaker name.
+    """
+    if not speaker:
+        return "#ffffff"
+
+    # specific check for 'me' or 'myself' to be green? Or just hash everything.
+    # Let's hash everything for consistency.
+
+    hash_object = hashlib.sha256(speaker.encode())
+    hash_hex = hash_object.hexdigest()
+
+    hue = int(hash_hex[:4], 16) / 0xFFFF
+
+    # Keep saturation and value high for visibility on dark backgrounds
+    saturation = 0.8 + (int(hash_hex[4:6], 16) / 255 * 0.2)  # 0.8 - 1.0
+    value = 0.9 + (int(hash_hex[6:8], 16) / 255 * 0.1)  # 0.9 - 1.0
+
+    rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+
+    # Convert to hex
+    r = int(rgb[0] * 255)
+    g = int(rgb[1] * 255)
+    b = int(rgb[2] * 255)
+
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 class DebugDetailsScreen(ModalScreen):
@@ -144,6 +175,7 @@ class TranslatedWidget(Static):
         self.original_id = turn.original_id
         self.speaker = turn.speaker
         self.text_content = turn.text
+        self.speaker_color = get_speaker_color(turn.speaker)
         super().__init__(self._get_renderable(), **kwargs)
         # Indent visually
         self.styles.margin = (0, 0, 0, 4)
@@ -151,7 +183,7 @@ class TranslatedWidget(Static):
     def _get_renderable(self) -> str:
         return (
             f"[bold yellow]#{self.turn_id}[/bold yellow] "
-            f"[bold green]{self.speaker}[/bold green]: "
+            f"[bold {self.speaker_color}]{self.speaker}[/bold {self.speaker_color}]: "
             f"[white]{self.text_content}[/white]"
         )
 
@@ -160,6 +192,7 @@ class TranslatedWidget(Static):
         self.speaker = speaker
         self.text_content = text
         self.original_id = original_id
+        self.speaker_color = get_speaker_color(speaker)
         self.update(self._get_renderable())
 
 

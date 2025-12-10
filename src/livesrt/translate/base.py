@@ -333,9 +333,7 @@ class LlmTranslator(Translator, abc.ABC):
                                         },
                                         "tone": {
                                             "type": "string",
-                                            "description": (
-                                                "The tone employed in the translation (e.g., formal, informal, sarcastic, neutral)."
-                                            ),
+                                            "description": "Translation tone.",
                                         },
                                     },
                                     "required": ["speaker", "text", "status"],
