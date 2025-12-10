@@ -1,0 +1,13 @@
+.idea/
+.code/
+/data/
+
+*.pyc
+*.swp
+*.egg-info
+*.wav
+*.ogg
+*.mp3
+*.log
+config.yml
+config*.yml
