@@ -1,6 +1,6 @@
 [project]
 name =  "livesrt"
-version = "0.1.0"
+version = "0.0.0"
 description = "Live subtitles for your life"
 authors = [
     { name = "Rémy Sanchez", email = "remy.sanchez@hyperthese.net" },
