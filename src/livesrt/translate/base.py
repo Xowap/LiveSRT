@@ -366,39 +366,45 @@ class LlmTranslator(Translator, abc.ABC):
                             lines = parsed.get("lines", [])
 
                             for line in lines:
-                                status = line.get("status", "success")
-                                text = line.get("text", "")
-                                speaker = line.get("speaker", "")
-                                comment = line.get("comment", "")
+                                match line:
+                                    case {
+                                        "speaker": speaker,
+                                        "text": text,
+                                        "status": status,
+                                    }:
+                                        out.append(
+                                            TranslatedTurn(
+                                                id=next_id,
+                                                original_id=turn.id,
+                                                speaker=speaker,
+                                                text=text,
+                                                hidden=(status == "impossible"),
+                                            )
+                                        )
+                                        debug_entries.append(
+                                            {
+                                                "summary": (
+                                                    f"[{status.upper()}] {speaker}: "
+                                                    f"{text[:20]}..."
+                                                ),
+                                                "details": {
+                                                    "input": input_data,
+                                                    "output": {
+                                                        "function": "translate",
+                                                        "parameters": line,
+                                                    },
+                                                    "comment": line.get("comment"),
+                                                },
+                                            }
+                                        )
+                                        next_id += 1
+                                    case _:
+                                        logger.warning(
+                                            "Unexpected line format in completion: %s",
+                                            line,
+                                        )
+                                        continue
 
-                                hidden = status == "impossible"
-
-                                out.append(
-                                    TranslatedTurn(
-                                        id=next_id,
-                                        original_id=turn.id,
-                                        speaker=speaker,
-                                        text=text,
-                                        hidden=hidden,
-                                    )
-                                )
-                                debug_entries.append(
-                                    {
-                                        "summary": (
-                                            f"[{status.upper()}] {speaker}: "
-                                            f"{text[:20]}..."
-                                        ),
-                                        "details": {
-                                            "input": input_data,
-                                            "output": {
-                                                "function": "translate",
-                                                "parameters": line,
-                                            },
-                                            "comment": comment,
-                                        },
-                                    }
-                                )
-                                next_id += 1
                             tool_outputs.append(str(len(lines)))
 
                         case {

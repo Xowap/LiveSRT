@@ -81,6 +81,7 @@ async def call_completion(
             "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             "deepinfra": "https://api.deepinfra.com/v1/openai/chat/completions",
             "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+            "ollama": "http://localhost:11434/api/chat",
         }[provider]
     except KeyError as e:
         msg = f"Provider {provider!r} not found."
@@ -89,7 +90,7 @@ async def call_completion(
     client: httpx.AsyncClient
     async with httpx.AsyncClient(
         headers={
-            "Authorization": f"Bearer {api_key}",
+            **({"Authorization": f"Bearer {api_key}"} if provider != "ollama" else {}),
             "HTTP-Referer": "https://github.com/Xowap/LiveSRT",
             "X-Title": "LiveSRT",
         },

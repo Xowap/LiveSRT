@@ -450,7 +450,7 @@ async def _make_translator(
     elif engine == "remote-llm":
         provider, _, _ = model.partition("/")
 
-        if not (key := keys.get(provider)):
+        if not (key := keys.get(provider)) and provider != "ollama":
             msg = f"No key stored for {provider}"
             raise click.ClickException(msg)
 
@@ -458,7 +458,7 @@ async def _make_translator(
             lang_to=lang_to,
             lang_from=lang_from,
             model=model,
-            api_key=key,
+            api_key=(key or ""),
         )
 
     msg = f"Unknown translation engine: {engine}"
