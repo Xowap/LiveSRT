@@ -35,6 +35,7 @@ class TranslatedTurn:
     start: timedelta | None = None
     end: timedelta | None = None
     hidden: bool = False
+    tone: str | None = None
 
 
 class TranslationReceiver(abc.ABC):
@@ -181,13 +182,11 @@ class LlmTranslator(Translator, abc.ABC):
             "   - PRESERVE the original tone, style, and register of the speaker.\n"
             "   - SPLIT the output so that EVERY sentence is on its own separate "
             "line.\n"
-            "4. Include onomatopoeia and sounds (e.g. laughter, applause) in "
-            "the translation, formatted in parentheses like (laughs).\n"
-            "5. Emit EXACTLY ONE tool call containing the list of dialogue "
+            "4. Emit EXACTLY ONE tool call containing the list of dialogue "
             "lines.\n\n"
-            "Use the `status` and `comment` fields to express uncertainty or "
-            "impossibility, ensuring the `text` field remains clean and "
-            "reader-friendly."
+            "Use the `status`, `comment` and `tone` fields to express uncertainty, "
+            "impossibility or specific tone, ensuring the `text` field remains "
+            "clean and reader-friendly. NEVER include the tone in the `text`."
         )
 
     def _build_user_message(self, turn: Turn) -> str:
@@ -332,6 +331,12 @@ class LlmTranslator(Translator, abc.ABC):
                                                 "issues."
                                             ),
                                         },
+                                        "tone": {
+                                            "type": "string",
+                                            "description": (
+                                                "The tone employed in the translation (e.g., formal, informal, sarcastic, neutral)."
+                                            ),
+                                        },
                                     },
                                     "required": ["speaker", "text", "status"],
                                 },
@@ -407,6 +412,7 @@ class LlmTranslator(Translator, abc.ABC):
                                                 speaker=speaker,
                                                 text=text,
                                                 hidden=(status == "impossible"),
+                                                tone=line.get("tone"),
                                             )
                                         )
                                         debug_entries.append(
@@ -422,6 +428,7 @@ class LlmTranslator(Translator, abc.ABC):
                                                         "parameters": line,
                                                     },
                                                     "comment": line.get("comment"),
+                                                    "tone": line.get("tone"),
                                                 },
                                             }
                                         )
