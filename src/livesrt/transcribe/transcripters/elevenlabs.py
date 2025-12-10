@@ -231,10 +231,16 @@ class ElevenLabsTranscripter(Transcripter):
             case {"message_type": "partial_transcript", "text": text}:
                 # Interim result
                 if text:
+                    # Synthesize words for partials so translation triggers
+                    words_list = [
+                        Word(type="word", text=w, speaker="") for w in text.split()
+                    ]
+
                     turn = Turn(
                         id=turn_id,
                         text=text,
                         final=False,
+                        words=words_list,
                     )
                     await receiver.receive_turn(turn)
 

@@ -104,15 +104,15 @@ class SettingsSection(Vertical):
         self.title = title
         self.settings = settings
 
-        def compose(self) -> ComposeResult:
-            """Compose the settings section layout."""
+    def compose(self) -> ComposeResult:
+        """Compose the settings section layout."""
 
-            yield Static(self.title, classes="settings-title")
+        yield Static(self.title, classes="settings-title")
 
-            for key, value in self.settings.items():
-                yield Static(
-                    f"  [bold cyan]{key}:[/bold cyan] {value}", classes="setting-item"
-                )
+        for key, value in self.settings.items():
+            yield Static(
+                f"  [bold cyan]{key}:[/bold cyan] {value}", classes="setting-item"
+            )
 
 
 class SettingsPanel(VerticalScroll):
