@@ -18,7 +18,7 @@ from tenacity import (
 )
 
 from ..errors import LiveSrtError
-from .base import LlmTranslator, TranslatedTurn
+from .base import LlmTranslator, TranslatedTurn, TranslationReceiver
 
 if TYPE_CHECKING:
     from ..transcribe.base import Turn
@@ -68,6 +68,7 @@ async def call_completion(
     messages: list[dict],
     tools: list[dict],
     tool_choice: Literal["auto", "required", "none"] | dict = "auto",
+    client: httpx.AsyncClient | None = None,
 ) -> dict:
     """
     Calls the remote LLM API to get a completion.
@@ -87,58 +88,57 @@ async def call_completion(
         msg = f"Provider {provider!r} not found."
         raise LiveSrtError(msg) from e
 
-    client: httpx.AsyncClient
-    async with httpx.AsyncClient(
-        headers={
-            **({"Authorization": f"Bearer {api_key}"} if provider != "ollama" else {}),
-            "HTTP-Referer": "https://github.com/Xowap/LiveSRT",
-            "X-Title": "LiveSRT",
-        },
-        timeout=5,
-    ) as client:
-        # OpenRouter caching: Use structured system prompt with cache_control
-        if provider == "openrouter" and "anthropic" in model_id:
-            new_messages = []
-            for item in messages:
-                if item["role"] == "system" and isinstance(item["content"], str):
-                    new_messages.append(
-                        {
-                            "role": "system",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": item["content"],
-                                    "cache_control": {"type": "ephemeral"},
-                                }
-                            ],
-                        }
-                    )
-                else:
-                    new_messages.append(item)
-            messages = new_messages
+    # OpenRouter caching: Use structured system prompt with cache_control
+    if provider == "openrouter" and "anthropic" in model_id:
+        new_messages = []
+        for item in messages:
+            if item["role"] == "system" and isinstance(item["content"], str):
+                new_messages.append(
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": item["content"],
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    }
+                )
+            else:
+                new_messages.append(item)
+        messages = new_messages
 
-        req_body = dict(
-            model=model_id,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
+    req_body = dict(
+        model=model_id,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+    )
+
+    if client:
+        resp = await client.post(base_url, json=req_body)
+    else:
+        async with httpx.AsyncClient(
+            headers={
+                **({"Authorization": f"Bearer {api_key}"} if provider != "ollama" else {}),
+                "HTTP-Referer": "https://github.com/Xowap/LiveSRT",
+                "X-Title": "LiveSRT",
+            },
+            timeout=5,
+        ) as new_client:
+            resp = await new_client.post(base_url, json=req_body)
+
+    if 400 <= resp.status_code < 500:
+        logger.error(
+            "API Request Error:\nRequest: %s\nResponse: %s",
+            json.dumps(req_body, indent=2),
+            resp.text,
         )
 
-        resp = await client.post(
-            base_url,
-            json=req_body,
-        )
+    resp.raise_for_status()
 
-        if 400 <= resp.status_code < 500:
-            logger.error(
-                "API Request Error:\nRequest: %s\nResponse: %s",
-                json.dumps(req_body, indent=2),
-                resp.text,
-            )
-
-        resp.raise_for_status()
-
-        return resp.json()
+    return resp.json()
 
 
 @dataclass(kw_only=True)
@@ -147,6 +147,7 @@ class RemoteLLM(LlmTranslator):
 
     model: str = "openrouter/mistralai/ministral-8b-2512"
     api_key: str
+    _client: httpx.AsyncClient | None = None
 
     async def health_check(self) -> None:
         """Checks if the API key is present."""
@@ -165,6 +166,26 @@ class RemoteLLM(LlmTranslator):
             "Model": model_id,
         }
 
+    async def process(self, receiver: TranslationReceiver) -> None:
+        """
+        Run the translation process with a persistent HTTP client.
+        """
+        provider, _, _ = self.model.partition("/")
+        
+        async with httpx.AsyncClient(
+            headers={
+                **({"Authorization": f"Bearer {self.api_key}"} if provider != "ollama" else {}),
+                "HTTP-Referer": "https://github.com/Xowap/LiveSRT",
+                "X-Title": "LiveSRT",
+            },
+            timeout=5,
+        ) as client:
+            self._client = client
+            try:
+                await super().process(receiver)
+            finally:
+                self._client = None
+
     async def completion(
         self,
         messages: list[dict],
@@ -182,6 +203,7 @@ class RemoteLLM(LlmTranslator):
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            client=self._client,
         )
         duration = time.perf_counter() - start
         logger.info("Remote LLM completion (%s) took %.2fs", self.model, duration)
