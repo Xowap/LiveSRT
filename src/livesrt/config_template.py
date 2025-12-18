@@ -44,8 +44,8 @@ translation:
     # Language to translate from (e.g., 'en', 'fr', 'es'). If null, auto-detects.
     lang_from: null
     # Remote LLM model to use (provider/model-name).
-    # Recommended: openrouter/mistralai/ministral-8b-2512
-    model: openrouter/mistralai/ministral-8b-2512
+    # Recommended: mistral/ministral-8b-latest
+    model: mistral/ministral-8b-latest
 
 # API Keys namespace: used for storing API keys securely with 'livesrt set-token'.
 # This helps categorize keys if you use multiple instances of LiveSRT.

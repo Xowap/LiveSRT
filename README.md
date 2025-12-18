@@ -36,6 +36,8 @@ Here's a quick demonstration of LiveSRT in action:
 - **Local LLMs:** Runs locally via `llama.cpp` (e.g., Ministral, Qwen).
 - **Remote LLMs:** Support for Groq, Mistral, Google Gemini, DeepInfra, Ollama
   and OpenRouter.
+  > 💡 **Tip:** The best quality/speed model is **Ministral 3 8B**. We recommend
+  > using `mistral/ministral-8b-latest`, which is free with a Mistral API key.
 
 ## 🚀 Quick Start
 
@@ -145,9 +147,9 @@ Simulate a live stream using an audio file (requires `ffmpeg`):
 
 ### Live Translation with Remote LLM
 
-To offload processing to a fast remote API (e.g., Groq):
+To offload processing to a fast remote API (e.g., Mistral):
 
-1.  Set the key: `uvx livesrt set-token groq`.
+1.  Set the key: `uvx livesrt set-token mistral`.
 2.  Edit `config.yml`:
     ```yaml
     translation:
@@ -155,7 +157,7 @@ To offload processing to a fast remote API (e.g., Groq):
         engine: remote-llm
         remote_llm:
             lang_to: Spanish
-            model: groq/llama-3.3-70b-versatile
+            model: mistral/ministral-8b-latest
     ```
 3.  Run: `uvx livesrt run`.
 
